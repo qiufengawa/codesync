@@ -412,7 +412,7 @@ function EventMessageBubble({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex gap-3">
+    <div className="group flex gap-3">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400">
         <Sparkles className="h-4 w-4" />
       </div>
@@ -459,7 +459,7 @@ function UserBubble({ e, ts, forkAction }: { e: PreviewEvent; ts: string; forkAc
   }
 
   return (
-    <div className="flex justify-end gap-3">
+    <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span>你</span>
@@ -491,7 +491,7 @@ function EmbeddedTranscriptBubble({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex justify-end gap-3">
+    <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span>你</span>
@@ -547,7 +547,7 @@ function DiffCommentBubble({
   const countLabel = `${prompt.comments.length} 条批注`;
 
   return (
-    <div className="flex justify-end gap-3">
+    <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span>你</span>
@@ -603,7 +603,7 @@ function AssistantBubble({
 }) {
   const text = extractText(e);
   return (
-    <div className="flex gap-3">
+    <div className="group flex gap-3">
       <Avatar role="assistant" />
       <div className="flex min-w-0 max-w-[85%] flex-col overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -745,7 +745,7 @@ function ForkNodeButton({ event, action }: { event: PreviewEvent; action: ForkAc
       type="button"
       variant="ghost"
       size="sm"
-      className="h-5 shrink-0 gap-1 px-1.5 text-[11px]"
+      className="h-5 shrink-0 gap-1 px-1.5 text-[11px] opacity-0 transition-opacity duration-150 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
       disabled={action.pending}
       onClick={(e) => {
         e.preventDefault();
