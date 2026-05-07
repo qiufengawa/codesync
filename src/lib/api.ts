@@ -1,0 +1,735 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export type SessionProvider = "codex" | "claude";
+export type StatsProvider = "all" | SessionProvider;
+
+export type Settings = {
+  codex_dir: string;
+  claude_dir: string;
+  backup_dir: string;
+  open_command: string;
+  refresh_interval_ms: number;
+};
+
+export type DirValidation = {
+  valid: boolean;
+  has_state_db: boolean;
+  has_sessions: boolean;
+  threads_count: number;
+};
+
+export type UpdateCheckResult =
+  | {
+      state: "idle";
+    }
+  | {
+      state: "checking";
+    }
+  | {
+      state: "current";
+      current_version: string;
+      latest_version: string;
+      html_url: string;
+    }
+  | {
+      state: "available";
+      current_version: string;
+      latest_version: string;
+      html_url: string;
+    }
+  | {
+      state: "error";
+      message: string;
+    };
+
+export type SessionSummary = {
+  provider: SessionProvider;
+  id: string;
+  rollout_path: string;
+  cwd: string;
+  cwd_display: string;
+  title: string;
+  first_user_message: string;
+  model: string | null;
+  reasoning_effort: string | null;
+  source: string | null;
+  agent_nickname: string | null;
+  agent_role: string | null;
+  tokens_used: number;
+  created_at: number;
+  updated_at: number;
+  archived: boolean;
+  git_branch: string | null;
+  rollout_bytes: number;
+  logs_count: number;
+  has_backup: boolean;
+  resume_command: string;
+};
+
+export type ProjectGroup = {
+  cwd: string;
+  cwd_display: string;
+  sessions: SessionSummary[];
+  latest_updated_at: number;
+  total_tokens: number;
+};
+
+export type PreviewEvent = {
+  index: number;
+  timestamp: string;
+  role: "user" | "assistant" | "tool_call" | "tool_result" | "reasoning" | "meta" | "other" | string;
+  kind: string;
+  text_summary: string;
+  raw: unknown;
+};
+
+export type SessionMetaBrief = {
+  id: string | null;
+  timestamp: string | null;
+  cwd: string | null;
+  originator: string | null;
+  cli_version: string | null;
+  source: string | null;
+  model_provider: string | null;
+};
+
+export type DeleteResult = {
+  id: string;
+  threads_rows_deleted: number;
+  logs_rows_deleted: number;
+  rollout_deleted: boolean;
+  rollout_missing: boolean;
+  ok: boolean;
+  error: string | null;
+};
+
+export type BackupSummary = {
+  path: string;
+  name: string;
+  provider: SessionProvider | null;
+  created_at: string;
+  sessions_count: number;
+  total_bytes: number;
+  note: string | null;
+};
+
+export type ManifestSession = {
+  provider: SessionProvider | null;
+  id: string;
+  rollout_relpath: string;
+  source_relpath: string | null;
+  sidecar_relpath: string | null;
+  title: string;
+  cwd: string;
+  created_at: number;
+  updated_at: number;
+  tokens_used: number;
+  model: string | null;
+  bytes_rollout: number;
+  logs_count: number;
+  sha256_rollout: string;
+};
+
+export type Manifest = {
+  version: number;
+  provider: SessionProvider | null;
+  created_at: string;
+  app_version: string;
+  codex_dir: string;
+  claude_dir: string | null;
+  note: string | null;
+  sessions: ManifestSession[];
+};
+
+export type BackupDetail = { summary: BackupSummary; manifest: Manifest };
+
+export type RestoreResult = {
+  id: string;
+  ok: boolean;
+  threads_inserted: boolean;
+  logs_inserted: number;
+  rollout_copied: boolean;
+  conflict: boolean;
+  error: string | null;
+};
+
+export type VerifyItem = {
+  id: string;
+  ok: boolean;
+  expected_sha: string;
+  actual_sha: string | null;
+  missing: boolean;
+};
+
+export type VerifyReport = { items: VerifyItem[]; all_ok: boolean };
+
+export type Kpi = {
+  sessions_total: number;
+  tokens_total: number;
+  active_projects: number;
+  avg_tokens_per_session: number;
+};
+
+export type TimeseriesPoint = { bucket_start: number; sessions: number; tokens: number };
+export type ProjectStat = {
+  provider: SessionProvider | null;
+  cwd: string;
+  cwd_display: string;
+  sessions: number;
+  tokens: number;
+};
+export type ModelStat = {
+  provider: SessionProvider | null;
+  model: string;
+  reasoning_effort: string | null;
+  sessions: number;
+  tokens: number;
+};
+
+// ========================= 修复 / 诊断 =========================
+
+export type ProviderInfo = {
+  current: string | null;
+  is_explicit: boolean;
+  config_path: string;
+  exists: boolean;
+};
+
+export type OrphanPruneReport = {
+  index_removed: number;
+  threads_removed: number;
+  dry_run: boolean;
+};
+
+export type DiagnosticReport = {
+  rollout_count: number;
+  archived_rollout_count: number;
+  index_count: number;
+  threads_count: number;
+  rollout_ids: string[];
+  index_ids: string[];
+  threads_ids: string[];
+  missing_in_index: string[];
+  missing_in_threads: string[];
+  orphan_in_index: string[];
+  orphan_in_threads: string[];
+  current_provider: string | null;
+  provider_mismatched_families: number;
+};
+
+export type IndexRepairReport = {
+  scanned: number;
+  written: number;
+  salvaged: number;
+  dry_run: boolean;
+  errors: string[];
+};
+
+export type ThreadsRebuildReport = {
+  scanned: number;
+  upserted: number;
+  skipped: number;
+  dry_run: boolean;
+  errors: string[];
+};
+
+export type CloneReport = {
+  source_id: string;
+  new_id: string | null;
+  new_rollout_path: string | null;
+  new_provider: string;
+  ok: boolean;
+  skipped_reason: string | null;
+  error: string | null;
+};
+
+export type SyncBranchReport = {
+  active_id: string;
+  source_id: string;
+  appended_lines: number;
+  total_lines: number;
+};
+
+export type BranchSyncReport = {
+  source_id: string;
+  target_id: string;
+  appended_lines: number;
+  total_lines: number;
+};
+
+export type BranchSyncRelation =
+  | "current"
+  | "same"
+  | "branch_ahead"
+  | "active_ahead"
+  | "diverged"
+  | "missing";
+
+export type BranchSyncState = {
+  branch_id: string;
+  relation: BranchSyncRelation;
+  active_lines: number | null;
+  branch_lines: number | null;
+  appendable_lines_to_active: number;
+  appendable_lines_to_branch: number;
+  error: string | null;
+};
+
+export type ForkSessionReport = {
+  source_id: string;
+  new_id: string;
+  new_rollout_path: string;
+  event_index: number;
+  included_lines: number;
+  cut_role: string;
+  cut_kind: string;
+  cut_summary: string;
+};
+
+export type SwitchStrategy = "continuous" | "scatter" | "follow";
+
+// ========================= 家族树 =========================
+
+export type BranchStatus = "active" | "archived" | "deleted";
+
+export type FamilyBranch = {
+  id: string;
+  provider: string;
+  created_at: string;
+  status: BranchStatus;
+  rollout_relpath: string;
+  sha256: string | null;
+  line_count: number | null;
+  note: string | null;
+};
+
+export type Family = {
+  family_id: string;
+  root_id: string;
+  title: string;
+  chain: FamilyBranch[];
+  active_id: string;
+  updated_at: string;
+};
+
+export type FamilyStore = {
+  version: number;
+  families: Record<string, Family>;
+  index: Record<string, string>;
+};
+
+export type FamilyIntegrityItem = {
+  family_id: string;
+  branch_id: string;
+  ok: boolean;
+  expected_sha: string | null;
+  actual_sha: string | null;
+  expected_lines: number | null;
+  actual_lines: number | null;
+  missing: boolean;
+};
+
+export type FamilyIntegrityReport = { items: FamilyIntegrityItem[]; all_ok: boolean };
+
+// ========================= Bundle 导出 / 导入 =========================
+
+export type BundleManifest = {
+  version: number;
+  provider: SessionProvider | null;
+  session_id: string;
+  rollout_relpath: string;
+  source_relpath: string | null;
+  sidecar_relpath: string | null;
+  exported_at: string;
+  updated_at: number;
+  thread_name: string;
+  session_cwd: string;
+  session_source: string | null;
+  session_originator: string | null;
+  model_provider: string | null;
+  export_machine: string;
+  export_group: string;
+  sha256_rollout: string;
+  rollout_line_count: number;
+  has_history: boolean;
+};
+
+export type BundleListItem = {
+  bundle_dir: string;
+  manifest: BundleManifest;
+  verified: boolean | null;
+};
+
+export type ExportReport = {
+  session_id: string;
+  ok: boolean;
+  bundle_path: string | null;
+  error: string | null;
+  skipped_reason: string | null;
+};
+
+export type ImportMode = "keep_local" | "overwrite" | "skip";
+
+export type ImportReport = {
+  session_id: string;
+  ok: boolean;
+  rollout_written: boolean;
+  history_appended: number;
+  threads_upserted: boolean;
+  index_appended: boolean;
+  skipped_reason: string | null;
+  error: string | null;
+  verified: boolean;
+  sha_mismatch: boolean;
+};
+
+export type CloneState = "matches" | "resync" | "clonable" | "has_clone" | "subagent" | "unknown";
+
+export type FamilyOverlay = {
+  session_id: string;
+  provider: string | null;
+  family_id: string | null;
+  branch_count: number;
+  is_active_branch: boolean;
+  clone_state: CloneState;
+};
+
+export type ZipReport = { path: string; files: number; bytes: number };
+
+export const api = {
+  appVersion: () => invoke<string>("app_version"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
+  openLatestReleasePage: () => invoke<void>("open_latest_release_page"),
+  defaultCodexDir: () => invoke<string>("default_codex_dir"),
+  defaultClaudeDir: () => invoke<string>("default_claude_dir"),
+  validateCodexDir: (path: string) => invoke<DirValidation>("validate_codex_dir", { path }),
+  validateClaudeDir: (path: string) => invoke<DirValidation>("validate_claude_dir", { path }),
+
+  listSessions: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
+    invoke<SessionSummary[]>("list_sessions", { provider, codexDir, claudeDir }),
+  groupByProject: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
+    invoke<ProjectGroup[]>("group_sessions_by_project", { provider, codexDir, claudeDir }),
+  searchSessions: (provider: SessionProvider, codexDir: string, claudeDir: string | undefined, query: string) =>
+    invoke<SessionSummary[]>("search_sessions", { provider, codexDir, claudeDir, query }),
+  setArchived: (provider: SessionProvider, codexDir: string, id: string, v: boolean) =>
+    invoke<void>("set_archived", { provider, codexDir, id, v }),
+  deleteSession: (
+    provider: SessionProvider,
+    codexDir: string,
+    id: string,
+    claudeDir?: string,
+  ) => invoke<DeleteResult>("delete_session", { provider, codexDir, claudeDir, id }),
+  deleteSessions: (
+    provider: SessionProvider,
+    codexDir: string,
+    ids: string[],
+    claudeDir?: string,
+  ) => invoke<DeleteResult[]>("delete_sessions", { provider, codexDir, claudeDir, ids }),
+
+  previewHead: (provider: SessionProvider, rolloutPath: string, limit: number) =>
+    invoke<PreviewEvent[]>("preview_session_head", { provider, rolloutPath, limit }),
+  previewRange: (provider: SessionProvider, rolloutPath: string, offset: number, limit: number) =>
+    invoke<PreviewEvent[]>("preview_session_range", { provider, rolloutPath, offset, limit }),
+  previewMeta: (provider: SessionProvider, rolloutPath: string) =>
+    invoke<SessionMetaBrief>("preview_session_meta", { provider, rolloutPath }),
+
+  createBackup: (p: {
+    provider: SessionProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    backup_dir: string;
+    ids: string[];
+    name?: string;
+    note?: string;
+  }) =>
+    invoke<BackupSummary>("create_backup", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      backupDir: p.backup_dir,
+      ids: p.ids,
+      name: p.name,
+      note: p.note,
+    }),
+  listBackups: (backupDir: string, provider?: SessionProvider) =>
+    invoke<BackupSummary[]>("list_backups", { backupDir, provider }),
+  openBackup: (backupPath: string) => invoke<BackupDetail>("open_backup", { backupPath }),
+  restoreSession: (p: {
+    provider: SessionProvider;
+    backup_path: string;
+    codex_dir: string;
+    claude_dir?: string;
+    id: string;
+    overwrite: boolean;
+  }) =>
+    invoke<RestoreResult>("restore_session", {
+      provider: p.provider,
+      backupPath: p.backup_path,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      id: p.id,
+      overwrite: p.overwrite,
+    }),
+  restoreAll: (p: {
+    provider: SessionProvider;
+    backup_path: string;
+    codex_dir: string;
+    claude_dir?: string;
+    overwrite: boolean;
+  }) =>
+    invoke<RestoreResult[]>("restore_all", {
+      provider: p.provider,
+      backupPath: p.backup_path,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      overwrite: p.overwrite,
+    }),
+  deleteBackup: (backupPath: string) => invoke<void>("delete_backup", { backupPath }),
+  verifyBackup: (backupPath: string) => invoke<VerifyReport>("verify_backup", { backupPath }),
+
+  statsKpi: (p: {
+    provider: StatsProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    from_ts: number | null;
+    to_ts: number | null;
+    cwd_filter: string[];
+    include_archived: boolean;
+  }) =>
+    invoke<Kpi>("stats_kpi", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      fromTs: p.from_ts,
+      toTs: p.to_ts,
+      cwdFilter: p.cwd_filter,
+      includeArchived: p.include_archived,
+    }),
+  statsTimeseries: (p: {
+    provider: StatsProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    from_ts: number | null;
+    to_ts: number | null;
+    bucket: "day" | "week";
+    cwd_filter: string[];
+    include_archived: boolean;
+  }) =>
+    invoke<TimeseriesPoint[]>("stats_timeseries", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      fromTs: p.from_ts,
+      toTs: p.to_ts,
+      bucket: p.bucket,
+      cwdFilter: p.cwd_filter,
+      includeArchived: p.include_archived,
+    }),
+  statsByProject: (p: {
+    provider: StatsProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    from_ts: number | null;
+    to_ts: number | null;
+    limit: number;
+    cwd_filter: string[];
+    include_archived: boolean;
+  }) =>
+    invoke<ProjectStat[]>("stats_by_project", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      fromTs: p.from_ts,
+      toTs: p.to_ts,
+      limit: p.limit,
+      cwdFilter: p.cwd_filter,
+      includeArchived: p.include_archived,
+    }),
+  statsByModel: (p: {
+    provider: StatsProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    from_ts: number | null;
+    to_ts: number | null;
+    cwd_filter: string[];
+    include_archived: boolean;
+  }) =>
+    invoke<ModelStat[]>("stats_by_model", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      fromTs: p.from_ts,
+      toTs: p.to_ts,
+      cwdFilter: p.cwd_filter,
+      includeArchived: p.include_archived,
+    }),
+  statsHeatmap: (p: {
+    provider: StatsProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    from_ts: number | null;
+    to_ts: number | null;
+    cwd_filter: string[];
+    include_archived: boolean;
+  }) =>
+    invoke<number[][]>("stats_heatmap", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      fromTs: p.from_ts,
+      toTs: p.to_ts,
+      cwdFilter: p.cwd_filter,
+      includeArchived: p.include_archived,
+    }),
+
+  revealCwd: (cwd: string) => invoke<void>("reveal_cwd", { cwd }),
+  copyResumeCommand: (provider: SessionProvider, sessionId: string) =>
+    invoke<string>("copy_resume_command", { provider, sessionId }),
+
+  // ========================= 修复 =========================
+  getProviderInfo: (codexDir: string) => invoke<ProviderInfo>("get_provider_info", { codexDir }),
+  diagnoseCodexState: (codexDir: string) =>
+    invoke<DiagnosticReport>("diagnose_codex_state", { codexDir }),
+  repairSessionIndex: (codexDir: string, dryRun: boolean) =>
+    invoke<IndexRepairReport>("repair_session_index", { codexDir, dryRun }),
+  rebuildThreadsTable: (codexDir: string, dryRun: boolean) =>
+    invoke<ThreadsRebuildReport>("rebuild_threads_table", { codexDir, dryRun }),
+  pruneOrphanEntries: (p: {
+    codex_dir: string;
+    prune_index: boolean;
+    prune_threads: boolean;
+    dry_run: boolean;
+  }) =>
+    invoke<OrphanPruneReport>("prune_orphan_entries", {
+      codexDir: p.codex_dir,
+      pruneIndex: p.prune_index,
+      pruneThreads: p.prune_threads,
+      dryRun: p.dry_run,
+    }),
+  cloneSessionForProvider: (p: {
+    codex_dir: string;
+    session_id: string;
+    target_provider?: string;
+    strategy: SwitchStrategy;
+    dry_run: boolean;
+  }) =>
+    invoke<CloneReport>("clone_session_for_provider", {
+      codexDir: p.codex_dir,
+      sessionId: p.session_id,
+      targetProvider: p.target_provider,
+      strategy: p.strategy,
+      dryRun: p.dry_run,
+    }),
+  forkSessionAtEvent: (p: {
+    codex_dir: string;
+    session_id: string;
+    rollout_path: string;
+    event_index: number;
+  }) =>
+    invoke<ForkSessionReport>("fork_session_at_event", {
+      codexDir: p.codex_dir,
+      sessionId: p.session_id,
+      rolloutPath: p.rollout_path,
+      eventIndex: p.event_index,
+    }),
+  batchCloneForCurrentProvider: (p: {
+    codex_dir: string;
+    strategy: SwitchStrategy;
+    dry_run: boolean;
+  }) =>
+    invoke<CloneReport[]>("batch_clone_for_current_provider", {
+      codexDir: p.codex_dir,
+      strategy: p.strategy,
+      dryRun: p.dry_run,
+    }),
+  rollbackFamilyActive: (codexDir: string, familyId: string, targetBranchId: string) =>
+    invoke<void>("rollback_family_active", { codexDir, familyId, targetBranchId }),
+  deleteFamilyBranch: (codexDir: string, familyId: string, branchId: string) =>
+    invoke<DeleteResult>("delete_family_branch", { codexDir, familyId, branchId }),
+  getFamilyBranchSyncStates: (codexDir: string, familyId: string) =>
+    invoke<BranchSyncState[]>("get_family_branch_sync_states", { codexDir, familyId }),
+  syncBranchIntoActive: (codexDir: string, familyId: string, sourceBranchId: string) =>
+    invoke<SyncBranchReport>("sync_branch_into_active", {
+      codexDir,
+      familyId,
+      sourceBranchId,
+    }),
+  syncActiveIntoBranch: (codexDir: string, familyId: string, targetBranchId: string) =>
+    invoke<BranchSyncReport>("sync_active_into_branch", {
+      codexDir,
+      familyId,
+      targetBranchId,
+    }),
+
+  // ========================= 家族 =========================
+  getFamilyStore: (codexDir: string) => invoke<FamilyStore>("get_family_store", { codexDir }),
+  verifyFamilyIntegrity: (codexDir: string) =>
+    invoke<FamilyIntegrityReport>("verify_family_integrity", { codexDir }),
+  getSessionFamilyOverlay: (codexDir: string) =>
+    invoke<FamilyOverlay[]>("get_session_family_overlay", { codexDir }),
+
+  // ========================= Bundle 导出 / 导入 =========================
+  exportSessionBundles: (p: {
+    provider: SessionProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    out_dir: string;
+    ids: string[];
+    machine_label?: string;
+    export_group?: string;
+  }) =>
+    invoke<ExportReport[]>("export_session_bundles", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      outDir: p.out_dir,
+      ids: p.ids,
+      machineLabel: p.machine_label,
+      exportGroup: p.export_group,
+    }),
+  exportAllBundles: (p: {
+    provider: SessionProvider;
+    codex_dir: string;
+    claude_dir?: string;
+    out_dir: string;
+    machine_label?: string;
+    export_group?: string;
+    active_only: boolean;
+  }) =>
+    invoke<ExportReport[]>("export_all_bundles", {
+      provider: p.provider,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      outDir: p.out_dir,
+      machineLabel: p.machine_label,
+      exportGroup: p.export_group,
+      activeOnly: p.active_only,
+    }),
+  listBundles: (srcDir: string, provider?: SessionProvider) =>
+    invoke<BundleListItem[]>("list_bundles", { srcDir, provider }),
+  verifyBundlesCmd: (srcDir: string, provider?: SessionProvider) =>
+    invoke<BundleListItem[]>("verify_bundles", { srcDir, provider }),
+  importSessionBundles: (p: {
+    provider: SessionProvider;
+    src_dir: string;
+    codex_dir: string;
+    claude_dir?: string;
+    mode: ImportMode;
+    make_visible: boolean;
+    strict: boolean;
+  }) =>
+    invoke<ImportReport[]>("import_session_bundles", {
+      provider: p.provider,
+      srcDir: p.src_dir,
+      codexDir: p.codex_dir,
+      claudeDir: p.claude_dir,
+      mode: p.mode,
+      makeVisible: p.make_visible,
+      strict: p.strict,
+    }),
+  packBundlesZip: (srcDir: string, zipPath: string) =>
+    invoke<ZipReport>("pack_bundles_zip", { srcDir, zipPath }),
+  unpackZip: (zipPath: string, dstDir: string) =>
+    invoke<ZipReport>("unpack_zip", { zipPath, dstDir }),
+};

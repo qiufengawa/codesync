@@ -1,0 +1,843 @@
+import { useCallback, useEffect, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  Database,
+  Eraser,
+  Info,
+  List,
+  Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  Wand2,
+  Wrench,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { TopBar } from "@/components/TopBar";
+import { EmptyState } from "@/components/EmptyState";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+import { useSettings } from "@/stores/settings";
+import {
+  api,
+  type DiagnosticReport,
+  type FamilyIntegrityReport,
+  type ProviderInfo,
+  type SwitchStrategy,
+} from "@/lib/api";
+
+export default function RepairRoute() {
+  const settings = useSettings((s) => s.settings);
+  const codexDir = settings?.codex_dir ?? "";
+
+  const [diag, setDiag] = useState<DiagnosticReport | null>(null);
+  const [provider, setProvider] = useState<ProviderInfo | null>(null);
+  const [integrity, setIntegrity] = useState<FamilyIntegrityReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [strategy, setStrategy] = useState<SwitchStrategy>("continuous");
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const [confirmPrune, setConfirmPrune] = useState<null | "index" | "threads">(null);
+  const [running, setRunning] = useState<string | null>(null);
+  const [dryRun, setDryRun] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!codexDir) return;
+    setLoading(true);
+    try {
+      const [d, p, i] = await Promise.all([
+        api.diagnoseCodexState(codexDir),
+        api.getProviderInfo(codexDir),
+        api.verifyFamilyIntegrity(codexDir),
+      ]);
+      setDiag(d);
+      setProvider(p);
+      setIntegrity(i);
+    } catch (e) {
+      toast.error(`诊断失败：${String((e as Error)?.message ?? e)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [codexDir]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    setRunning(key);
+    try {
+      await fn();
+    } catch (e) {
+      toast.error(String((e as Error)?.message ?? e));
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  return (
+    <>
+      <TopBar title="修复" onRefresh={refresh} showListTools={false} />
+      <ScrollArea className="flex-1">
+        <div className="min-w-0 max-w-full space-y-4 p-4 sm:p-6">
+          {!codexDir ? (
+            <EmptyState
+              icon={<Wrench className="h-10 w-10" />}
+              title="尚未配置 Codex 目录"
+              description="请先在设置里填写 ~/.codex 路径"
+            />
+          ) : (
+            <>
+              <Card className="min-w-0 overflow-hidden">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
+                    <ShieldCheck className="h-4 w-4" />
+                    诊断总览
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        检查本地会话文件、索引文件（session_index.jsonl）和数据库（threads
+                        表）是否一致。如果有数量差异，可能会导致某些会话记录在界面上“看不到”或“点不开”。
+                      </TooltipContent>
+                    </Tooltip>
+                    {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="min-w-0 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <Stat label="本地会话文件" value={diag?.rollout_count ?? "-"} />
+                    <Stat
+                      label="会话索引 (index)"
+                      value={diag?.index_count ?? "-"}
+                      warn={
+                        diag != null && diag.index_count !== diag.rollout_count
+                      }
+                    />
+                    <Stat
+                      label="应用数据库表"
+                      value={diag?.threads_count ?? "-"}
+                      warn={
+                        diag != null && diag.threads_count !== diag.rollout_count
+                      }
+                    />
+                    <Stat
+                      label="已归档会话"
+                      value={diag?.archived_rollout_count ?? "-"}
+                    />
+                  </div>
+                  <Separator />
+                  <DiffRow
+                    label="存在会话文件，但在应用列表中漏显"
+                    ids={diag?.missing_in_index ?? []}
+                    color="amber"
+                    recommendation="下方点「修复会话索引 (index)」，会从本地文件重建 session_index.jsonl"
+                  />
+                  <DiffRow
+                    label="存在会话文件，但左侧边栏看不到"
+                    ids={diag?.missing_in_threads ?? []}
+                    color="rose"
+                    recommendation="下方点「重建会话索引表」，会把会话文件同步到 threads 表"
+                  />
+                  <DiffRow
+                    label="列表中残留：实际上会话文件已丢失"
+                    ids={diag?.orphan_in_index ?? []}
+                    color="muted"
+                    recommendation="若不打算恢复，下方点「清理索引残留」即可（或直接跑「修复会话索引」也会顺带清掉）"
+                  />
+                  <DiffRow
+                    label="数据库残留：实际上会话文件已丢失"
+                    ids={diag?.orphan_in_threads ?? []}
+                    color="muted"
+                    recommendation="若不打算恢复，下方点「清理数据库残留」即可"
+                  />
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1">
+                      <Switch
+                        id="dry-run"
+                        checked={dryRun}
+                        onCheckedChange={setDryRun}
+                      />
+                      <Label htmlFor="dry-run" className="flex items-center gap-1 text-xs">
+                        效果预览
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3 w-3 text-muted-foreground" />
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs text-xs">
+                            打开后下面的修复按钮只会扫描并报告"将要做什么"，不会实际写入
+                            任何文件或数据库。想先看看效果再动手，就打开它。
+                          </TooltipContent>
+                        </Tooltip>
+                      </Label>
+                    </div>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "default"}
+                          onClick={() =>
+                            run("index", async () => {
+                              const r = await api.repairSessionIndex(codexDir, dryRun);
+                              toast.success(
+                                dryRun
+                                  ? `预览：将写入 ${r.written} 行（救援 ${r.salvaged}），扫描 ${r.scanned}`
+                                  : `已写入 ${r.written} 行（救援 ${r.salvaged}）`,
+                              );
+                              if (!dryRun) await refresh();
+                            })
+                          }
+                          disabled={!!running}
+                          className="gap-1.5"
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                          修复会话索引 (index)
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        扫描所有本地会话文件，重新生成
+                        <code>session_index.jsonl</code> 索引文件。适用于：会话列表出现条目遗漏、排序错乱，
+                        或是不小心删除了索引文件的情况。
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "default"}
+                          onClick={() =>
+                            run("threads", async () => {
+                              const r = await api.rebuildThreadsTable(codexDir, dryRun);
+                              toast.success(
+                                dryRun
+                                  ? `预览：将同步 ${r.upserted} 条（跳过 ${r.skipped}）`
+                                  : `已同步 ${r.upserted} 条（跳过 ${r.skipped}）`,
+                              );
+                              if (!dryRun) await refresh();
+                            })
+                          }
+                          disabled={!!running}
+                          className="gap-1.5"
+                        >
+                          <Database className="h-3.5 w-3.5" />
+                          重建会话索引表
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        读取所有的会话文件，将它们的信息批量同步到
+                        应用数据库中。
+                        适用于：当你发现左侧边栏的历史会话消失或列表变为空白时，可以使用此功能进行修复。
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Separator orientation="vertical" className="mx-1 h-6" />
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "destructive"}
+                          onClick={() => {
+                            if (dryRun) {
+                              void run("prune_index", async () => {
+                                const r = await api.pruneOrphanEntries({
+                                  codex_dir: codexDir,
+                                  prune_index: true,
+                                  prune_threads: false,
+                                  dry_run: true,
+                                });
+                                toast.success(
+                                  `预览：将从 session_index 删除 ${r.index_removed} 行`,
+                                );
+                              });
+                            } else {
+                              setConfirmPrune("index");
+                            }
+                          }}
+                          disabled={
+                            !!running || (diag?.orphan_in_index?.length ?? 0) === 0
+                          }
+                          className="gap-1.5"
+                        >
+                          <Eraser className="h-3.5 w-3.5" />
+                          清理索引残留
+                          {(diag?.orphan_in_index?.length ?? 0) > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="ml-0.5 h-4 border-current/30 bg-background/20 px-1 text-[10px] font-normal"
+                            >
+                              {diag?.orphan_in_index.length}
+                            </Badge>
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        仅删除 <code>session_index.jsonl</code> 中指向已消失会话文件的"残留行"，
+                        不会重建，不动应用数据库。适合不打算恢复这些会话、只想把列表清干净的场景。
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "destructive"}
+                          onClick={() => {
+                            if (dryRun) {
+                              void run("prune_threads", async () => {
+                                const r = await api.pruneOrphanEntries({
+                                  codex_dir: codexDir,
+                                  prune_index: false,
+                                  prune_threads: true,
+                                  dry_run: true,
+                                });
+                                toast.success(
+                                  `预览：将从 threads 表删除 ${r.threads_removed} 行`,
+                                );
+                              });
+                            } else {
+                              setConfirmPrune("threads");
+                            }
+                          }}
+                          disabled={
+                            !!running || (diag?.orphan_in_threads?.length ?? 0) === 0
+                          }
+                          className="gap-1.5"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          清理数据库残留
+                          {(diag?.orphan_in_threads?.length ?? 0) > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="ml-0.5 h-4 border-current/30 bg-background/20 px-1 text-[10px] font-normal"
+                            >
+                              {diag?.orphan_in_threads.length}
+                            </Badge>
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        仅从应用数据库的 <code>threads</code> 表删除指向已消失会话文件的行，
+                        不会重建，不动索引文件。适合不打算恢复这些会话、只想把左侧边栏清干净的场景。
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="min-w-0 overflow-hidden">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
+                    <Wand2 className="h-4 w-4" />
+                    服务商 (Provider) 适配
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        切换 model_provider 后，旧会话可能因为 provider、source 或数据库状态不同步而不可见。
+                        这里会把需要处理的会话同步到当前 provider，让官方 App 能继续列出和恢复。
+                      </TooltipContent>
+                    </Tooltip>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="min-w-0 space-y-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Stat
+                      label="当前服务商 (provider)"
+                      value={
+                        provider?.current
+                          ? provider.is_explicit
+                            ? provider.current
+                            : `${provider.current}（默认）`
+                          : "-"
+                      }
+                      hint={
+                        provider && !provider.is_explicit
+                          ? "config.toml 未显式写 model_provider，Codex 默认使用 openai（官方 ChatGPT 登录与 OpenAI API key 都走这个 id）"
+                          : undefined
+                      }
+                    />
+                    <Stat
+                      label="需要同步的对话"
+                      value={diag?.provider_mismatched_families ?? 0}
+                      warn={(diag?.provider_mismatched_families ?? 0) > 0}
+                    />
+                    <div className="flex min-w-0 flex-col gap-1 rounded-md border bg-muted/20 p-3 text-xs">
+                      <span className="text-muted-foreground">切换策略</span>
+                      <Select
+                        value={strategy}
+                        onValueChange={(v) => setStrategy(v as SwitchStrategy)}
+                      >
+                        <SelectTrigger className="h-8 min-w-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="continuous">
+                            连续模式（推荐，自动归档旧节点）
+                          </SelectItem>
+                          <SelectItem value="scatter">
+                            散点模式（每个 provider 独立副本）
+                          </SelectItem>
+                          <SelectItem value="follow">
+                            跟随模式（就地改写，不克隆）
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="min-w-0 rounded-md bg-muted/30 p-3 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {strategy === "continuous" && (
+                      <>
+                        为当前服务商（provider）创建一份最新的会话副本，原记录会立即自动归档备用至 <code>archived_sessions/</code>，
+                        在应用中每条会话始终只会显示一个最新入口，保持整洁。归档时固化 sha256 + 行数用于完整性校验。
+                      </>
+                    )}
+                    {strategy === "scatter" && (
+                      <>
+                        每个服务商下都保留一份独立的会话副本。
+                        不归档旧会话，它们会随着你在不同服务商下的使用各自独立发展。
+                      </>
+                    )}
+                    {strategy === "follow" && (
+                      <>
+                        直接修改原会话文件中的服务商标记，由于没有克隆新副本，
+                        切换后该会话将只在新服务商下可见。
+                      </>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "default"}
+                          onClick={() => {
+                            if (dryRun) {
+                              run("clone", async () => {
+                                const r = await api.batchCloneForCurrentProvider({
+                                  codex_dir: codexDir,
+                                  strategy,
+                                  dry_run: true,
+                                });
+                                const ok = r.filter((x) => x.ok).length;
+                                toast.success(
+                                  `预览：${ok}/${r.length} 将执行（策略：${strategy}）`,
+                                );
+                              });
+                            } else {
+                              setConfirmBatch(true);
+                            }
+                          }}
+                          disabled={!!running || !provider?.current}
+                          className="gap-1.5"
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                          {dryRun ? "预览批量同步" : "批量同步到当前服务商"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        把 provider、source 或数据库状态与当前 Codex App 不兼容的会话同步到当前
+                        provider，让它们在 Codex App 里可以继续使用。切换策略见上方。
+                        {!provider?.current && (
+                          <div className="mt-1 text-muted-foreground">
+                            需要 config.toml 里设置 model_provider 才能批量执行。
+                          </div>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                    <span className="text-xs text-muted-foreground">
+                      {dryRun ? "当前：效果预览（不写入）" : "当前：实际执行（会写入磁盘）"}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="min-w-0 overflow-hidden">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
+                    <ShieldCheck className="h-4 w-4" />
+                    会话完整性校验
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        对每次克隆时归档的旧分支做 sha256 + 行数校验，
+                        发现文件被外部改过或丢失时会在这里亮红。
+                      </TooltipContent>
+                    </Tooltip>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="min-w-0 space-y-2">
+                  {integrity == null ? (
+                    <div className="text-xs text-muted-foreground">—</div>
+                  ) : integrity.items.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">
+                      尚无已固化校验信息（归档分支后会自动记录 sha256 + 行数）
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs">
+                        {integrity.all_ok ? (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                            <span>全部 {integrity.items.length} 条校验通过</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                            <span>
+                              {integrity.items.filter((x) => !x.ok).length}/
+                              {integrity.items.length} 条校验失败
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div className="max-h-64 max-w-full overflow-auto rounded-md border">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/40 text-left">
+                            <tr>
+                              <th className="px-2 py-1">对话分组(family)</th>
+                              <th className="px-2 py-1">发展分支(branch)</th>
+                              <th className="px-2 py-1">状态</th>
+                              <th className="px-2 py-1">sha256</th>
+                              <th className="px-2 py-1">行数</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {integrity.items.map((it) => (
+                              <tr
+                                key={`${it.family_id}-${it.branch_id}`}
+                                className={it.ok ? "" : "bg-rose-500/5"}
+                              >
+                                <td className="truncate px-2 py-1 font-mono">
+                                  {it.family_id.slice(0, 8)}…
+                                </td>
+                                <td className="truncate px-2 py-1 font-mono">
+                                  {it.branch_id.slice(0, 8)}…
+                                </td>
+                                <td className="px-2 py-1">
+                                  {it.missing ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 border-rose-500/30 px-1.5 text-rose-500"
+                                    >
+                                      文件缺失
+                                    </Badge>
+                                  ) : it.ok ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 border-emerald-500/30 px-1.5 text-emerald-600"
+                                    >
+                                      OK
+                                    </Badge>
+                                  ) : (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 border-amber-500/30 px-1.5 text-amber-600"
+                                    >
+                                      不一致
+                                    </Badge>
+                                  )}
+                                </td>
+                                <td className="px-2 py-1 font-mono">
+                                  {it.actual_sha?.slice(0, 10) ?? "-"}
+                                </td>
+                                <td className="px-2 py-1 tabular-nums">
+                                  {it.actual_lines ?? "-"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+      </ScrollArea>
+
+      <AlertDialog open={confirmBatch} onOpenChange={setConfirmBatch}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>批量同步 {diag?.provider_mismatched_families ?? 0} 条对话记录</AlertDialogTitle>
+            <AlertDialogDescription>
+              目标服务商 (provider)：<b>{provider?.current}</b>；策略：
+              <b>{strategy}</b>
+              。操作会写入新的会话文件
+              {strategy === "continuous" ? "并把旧会话归档" : ""}；
+              可在 <code>archived_sessions/</code> 中找回历史记录。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                run("clone_do", async () => {
+                  const r = await api.batchCloneForCurrentProvider({
+                    codex_dir: codexDir,
+                    strategy,
+                    dry_run: false,
+                  });
+                  const ok = r.filter((x) => x.ok).length;
+                  const fail = r.filter((x) => x.error).length;
+                  toast.success(
+                    `完成：${ok}/${r.length}${fail ? ` · ${fail} 个错误` : ""}`,
+                  );
+                  await refresh();
+                })
+              }
+            >
+              确认执行
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={confirmPrune !== null}
+        onOpenChange={(o) => {
+          if (!o) setConfirmPrune(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmPrune === "index" ? "清理索引残留" : "清理数据库残留"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              即将从{" "}
+              {confirmPrune === "index" ? (
+                <>
+                  <code>session_index.jsonl</code> 删除{" "}
+                  <b>{diag?.orphan_in_index.length ?? 0}</b> 行
+                </>
+              ) : (
+                <>
+                  应用数据库的 <code>threads</code> 表删除{" "}
+                  <b>{diag?.orphan_in_threads.length ?? 0}</b> 行
+                </>
+              )}
+              。这些条目指向的会话文件已经不存在，删除后不可撤销。对应的历史会话文件
+              不会因此被再次修改。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const kind = confirmPrune;
+                setConfirmPrune(null);
+                if (!kind) return;
+                void run(kind === "index" ? "prune_index" : "prune_threads", async () => {
+                  const r = await api.pruneOrphanEntries({
+                    codex_dir: codexDir,
+                    prune_index: kind === "index",
+                    prune_threads: kind === "threads",
+                    dry_run: false,
+                  });
+                  toast.success(
+                    kind === "index"
+                      ? `已从 session_index 删除 ${r.index_removed} 行`
+                      : `已从 threads 表删除 ${r.threads_removed} 行`,
+                  );
+                  await refresh();
+                });
+              }}
+            >
+              确认清理
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  warn,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  warn?: boolean;
+  hint?: string;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-muted/20 p-3">
+      <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <span className="min-w-0 break-words">{label}</span>
+        {hint && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm text-xs">{hint}</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+      <div
+        className={`min-w-0 break-words text-lg font-semibold tabular-nums ${
+          warn ? "text-amber-600" : ""
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function DiffRow({
+  label,
+  ids,
+  color,
+  recommendation,
+}: {
+  label: string;
+  ids: string[];
+  color: "amber" | "rose" | "muted";
+  recommendation?: string;
+}) {
+  if (ids.length === 0) return null;
+  const preview = ids.slice(0, 4).join("  ");
+  const toneClass =
+    color === "amber"
+      ? "border-amber-500/30 text-amber-600"
+      : color === "rose"
+        ? "border-rose-500/30 text-rose-500"
+        : "border-muted-foreground/20 text-muted-foreground";
+  return (
+    <div className="flex min-w-0 items-start gap-2 text-xs">
+      <AlertCircle className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${toneClass}`} />
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="min-w-0 break-words">{label}</span>
+          <Badge variant="outline" className={`h-5 shrink-0 px-1.5 font-normal ${toneClass}`}>
+            {ids.length}
+          </Badge>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 shrink-0 gap-1 px-2 text-[11px]"
+              >
+                <List className="h-3.5 w-3.5" />
+                查看明细
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="flex h-[min(85vh,40rem)] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+              <DialogHeader className="shrink-0 space-y-1 border-b px-5 py-4 pr-10">
+                <DialogTitle className="min-w-0 break-words text-base">
+                  {label}
+                </DialogTitle>
+                <DialogDescription className="flex flex-wrap items-center gap-2">
+                  <span>{ids.length} 条会话 ID · 点击可复制</span>
+                  {recommendation && (
+                    <span className="rounded-md border border-dashed bg-muted/30 px-2 py-0.5 text-[11px] text-foreground/80">
+                      建议：{recommendation}
+                    </span>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              <ScrollArea className="min-h-0 flex-1">
+                <ol className="divide-y">
+                  {ids.map((id, index) => (
+                    <li
+                      key={`${id}-${index}`}
+                      className="group flex min-w-0 items-center gap-3 px-5 py-2 hover:bg-muted/40"
+                    >
+                      <span className="w-6 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                        {index + 1}
+                      </span>
+                      <code className="min-w-0 flex-1 break-all font-mono text-[11px] leading-5">
+                        {id}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(id);
+                            toast.success("已复制到剪贴板");
+                          } catch {
+                            toast.error("复制失败");
+                          }
+                        }}
+                        aria-label="复制会话 ID"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    </li>
+                  ))}
+                </ol>
+              </ScrollArea>
+            </DialogContent>
+          </Dialog>
+        </div>
+        <div className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+          {preview}
+        </div>
+        {recommendation && (
+          <div className="min-w-0 text-[11px] text-muted-foreground">
+            <span className="mr-1 rounded-sm bg-muted/60 px-1 py-0.5 text-[10px] font-medium text-foreground/70">
+              建议
+            </span>
+            <span className="[overflow-wrap:anywhere]">{recommendation}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,221 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 142.1 76.2% 36.3%;
+    --primary-foreground: 355.7 100% 97.3%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 142.1 76.2% 36.3%;
+    --radius: 0.5rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 142.1 76.2% 36.3%;
+    --sidebar-primary-foreground: 355.7 100% 97.3%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+    --chart-1: 142.1 76.2% 36.3%;
+    --chart-2: 173.4 80.4% 40%;
+    --chart-3: 43.3 96.4% 56.3%;
+    --chart-4: 262.1 83.3% 57.8%;
+    --chart-5: 346.8 77.2% 49.8%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 142.1 70.6% 45.3%;
+    --primary-foreground: 144.9 80.4% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 142.1 70.6% 45.3%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 142.1 70.6% 45.3%;
+    --sidebar-primary-foreground: 144.9 80.4% 10%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+    --chart-1: 142.1 70.6% 45.3%;
+    --chart-2: 173.4 80.4% 40%;
+    --chart-3: 43.3 96.4% 56.3%;
+    --chart-4: 262.1 83.3% 57.8%;
+    --chart-5: 346.8 77.2% 49.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .wrap-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+mark {
+  @apply bg-yellow-200/80 text-inherit rounded-sm px-0.5 dark:bg-yellow-500/40;
+}
+
+/* --- Markdown 聊天气泡样式 --- */
+.chat-md {
+  @apply min-w-0 max-w-full text-[14px] leading-relaxed;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+.chat-md p {
+  @apply my-2 min-w-0;
+}
+.chat-md ul,
+.chat-md ol {
+  @apply my-2 pl-6;
+}
+.chat-md li {
+  @apply my-0.5;
+}
+.chat-md ul {
+  list-style: disc;
+}
+.chat-md ol {
+  list-style: decimal;
+}
+.chat-md h1,
+.chat-md h2,
+.chat-md h3,
+.chat-md h4 {
+  @apply mt-4 mb-2 font-semibold;
+}
+.chat-md h1 {
+  @apply text-lg;
+}
+.chat-md h2 {
+  @apply text-base;
+}
+.chat-md h3 {
+  @apply text-[15px];
+}
+.chat-md code {
+  @apply rounded bg-muted px-1 py-0.5 font-mono text-[12.5px] text-foreground;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.chat-md pre {
+  @apply my-3 max-w-full overflow-auto rounded-md border bg-muted/50 p-3;
+  white-space: pre-wrap;
+}
+.chat-md pre code {
+  @apply bg-transparent p-0 text-[12.5px];
+  color: inherit;
+  white-space: inherit;
+}
+.chat-md blockquote {
+  @apply my-3 border-l-2 border-border pl-3 text-muted-foreground;
+}
+.chat-md table {
+  @apply my-3 block max-w-full overflow-auto text-sm;
+  border-collapse: collapse;
+}
+.chat-md th,
+.chat-md td {
+  @apply border border-border px-2 py-1 text-left;
+}
+.chat-md th {
+  @apply bg-muted/50 font-semibold;
+}
+.chat-md a {
+  @apply text-primary underline underline-offset-2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.chat-md hr {
+  @apply my-4 border-border;
+}
+
+.chat-md img {
+  @apply max-w-full rounded-md;
+}
+
+.chat-md.bg-primary code,
+.bg-primary .chat-md code {
+  background: hsl(var(--primary-foreground) / 0.16);
+  color: hsl(var(--primary-foreground));
+}
+
+.chat-md.bg-primary pre,
+.bg-primary .chat-md pre {
+  border-color: hsl(var(--primary-foreground) / 0.24);
+  background: hsl(var(--primary-foreground) / 0.1);
+  color: hsl(var(--primary-foreground));
+}
+
+.chat-md.bg-primary a,
+.bg-primary .chat-md a {
+  color: hsl(var(--primary-foreground));
+  text-decoration-color: hsl(var(--primary-foreground) / 0.78);
+}
+
+/* --- 滚动条细化 --- */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-border;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}

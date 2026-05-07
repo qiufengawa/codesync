@@ -1,0 +1,32 @@
+use std::path::Path;
+
+use rusqlite::{Connection, OpenFlags};
+
+use crate::error::AppResult;
+
+pub fn open(codex_dir: &Path) -> AppResult<Connection> {
+    let conn = Connection::open_with_flags(
+        codex_dir.join("logs_2.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    Ok(conn)
+}
+
+pub fn open_ro(codex_dir: &Path) -> AppResult<Connection> {
+    let conn = Connection::open_with_flags(
+        codex_dir.join("logs_2.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    Ok(conn)
+}
+
+#[allow(dead_code)]
+pub fn count_for_thread(conn: &Connection, thread_id: &str) -> AppResult<i64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM logs WHERE thread_id = ?",
+        [thread_id],
+        |r| r.get(0),
+    )?;
+    Ok(n)
+}
