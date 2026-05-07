@@ -96,3 +96,21 @@ jobs:
             See README.md for installation and usage notes.
           releaseDraft: false
           prerelease: false
+
+      - name: Create Windows portable executable
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: node scripts/package-release.mjs --target portable
+
+      - name: Upload Windows portable executable
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $asset = "release/cc-session-manager-portable-v$version-windows.exe"
+          if (!(Test-Path $asset)) {
+            throw "Windows portable executable was not found: $asset"
+          }
+          gh release upload "${{ github.ref_name }}" $asset --clobber

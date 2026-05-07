@@ -70,6 +70,8 @@ git push origin v0.2.5
 
 工作流会在 Windows、macOS 和 Linux 上分别构建 Tauri 安装产物。macOS 打包要求 `src-tauri/icons/icon.icns` 存在，本仓库已提交 Tauri 生成的跨平台图标文件。
 
+Windows Release 会额外上传 `cc-session-manager-portable-v版本号-windows.exe`，这是无需安装即可直接运行的便携版可执行文件。
+
 ## 手动打包
 
 生成源码包：
@@ -83,6 +85,8 @@ npm run package:source
 ```bash
 npm run package:portable
 ```
+
+在 Windows 上，该命令会同时生成便携版压缩包和可直接运行的 `cc-session-manager-portable-v版本号-windows.exe`。
 
 生成安装器包：
 

@@ -141,9 +141,16 @@ async function createPortablePackage() {
   const packageName = `cc-session-manager-portable-v${version}-${platform}`;
   const stage = path.join(tempRoot, packageName);
   const archivePath = path.join(outputRoot, `${packageName}.zip`);
+  const executableOutputPath =
+    process.platform === "win32"
+      ? path.join(outputRoot, `cc-session-manager-portable-v${version}-windows.exe`)
+      : null;
 
   await cleanDir(stage);
   await fs.copyFile(exePath, path.join(stage, executableName()));
+  if (executableOutputPath) {
+    await fs.copyFile(exePath, executableOutputPath);
+  }
 
   const readme = [
     "CC Sessions Portable",
@@ -165,6 +172,9 @@ async function createPortablePackage() {
   await fs.writeFile(path.join(stage, "README.txt"), readme, "utf8");
 
   await writeZipFromDirectory(stage, archivePath);
+  if (executableOutputPath) {
+    console.log(`Portable executable: ${executableOutputPath}`);
+  }
   console.log(`Portable package: ${archivePath}`);
 }
 
