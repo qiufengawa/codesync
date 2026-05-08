@@ -14,6 +14,7 @@ use cc_session_manager_lib::{
 };
 use serde::Serialize;
 
+#[path = "../cli_menu.rs"]
 mod menu;
 
 type CliResult<T> = Result<T, CliError>;
