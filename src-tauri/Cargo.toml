@@ -4,6 +4,7 @@ version = "0.2.7"
 description = "CC Sessions"
 authors = ["zjsmew"]
 edition = "2021"
+default-run = "cc-session-manager"
 
 [lib]
 name = "cc_session_manager_lib"
