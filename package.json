@@ -1,7 +1,7 @@
 {
   "name": "cc-session-manager",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,11 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "cli:check": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions",
+    "cli:build": "cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features --bin cc-sessions",
+    "cli:run": "cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions --",
     "package:source": "node scripts/package-release.mjs --target source",
+    "package:cli": "node scripts/package-release.mjs --target cli --build-product",
     "package:portable": "node scripts/package-release.mjs --target portable --build-product",
     "package:product": "node scripts/package-release.mjs --target product --build-product",
     "package:all": "node scripts/package-release.mjs --target all --build-product"

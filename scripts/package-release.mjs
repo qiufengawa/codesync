@@ -17,12 +17,17 @@ const buildProduct = args.buildProduct ?? false;
 const version = args.version ?? readPackageVersion();
 const platform = platformLabel();
 
-if (!["source", "portable", "product", "all"].includes(target)) {
+if (!["source", "portable", "product", "cli", "all"].includes(target)) {
   throw new Error(`Unknown target: ${target}`);
 }
 
 const outputRoot = path.join(repoRoot, outputDir);
 const tempRoot = path.join(outputRoot, ".tmp");
+const cargoTargetRoot = args.cargoTargetDir
+  ? path.resolve(repoRoot, args.cargoTargetDir)
+  : process.env.CARGO_TARGET_DIR
+  ? path.resolve(repoRoot, process.env.CARGO_TARGET_DIR)
+  : path.join(repoRoot, "src-tauri", "target");
 
 await ensureDir(outputRoot);
 await cleanDir(tempRoot);
@@ -38,6 +43,10 @@ try {
 
   if (target === "product" || target === "all") {
     await createProductPackage();
+  }
+
+  if (target === "cli" || target === "all") {
+    await createCliPackage();
   }
 } finally {
   await fs.rm(tempRoot, { recursive: true, force: true });
@@ -61,6 +70,10 @@ function parseArgs(argv) {
       out.outputDir = arg.slice("--output-dir=".length);
     } else if (arg === "--output-dir" || arg === "--outputDir") {
       out.outputDir = argv[++i];
+    } else if (arg.startsWith("--cargo-target-dir=")) {
+      out.cargoTargetDir = arg.slice("--cargo-target-dir=".length);
+    } else if (arg === "--cargo-target-dir" || arg === "--cargoTargetDir") {
+      out.cargoTargetDir = argv[++i];
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -82,6 +95,10 @@ function platformLabel() {
 
 function executableName() {
   return process.platform === "win32" ? "cc-session-manager.exe" : "cc-session-manager";
+}
+
+function cliExecutableName() {
+  return process.platform === "win32" ? "cc-sessions.exe" : "cc-sessions";
 }
 
 async function createSourcePackage() {
@@ -216,6 +233,55 @@ async function createProductPackage() {
 
   await writeZipFromDirectory(stage, archivePath);
   console.log(`Product package: ${archivePath}`);
+}
+
+async function createCliPackage() {
+  if (buildProduct) {
+    const buildArgs = [
+      "build",
+      "--manifest-path",
+      path.join("src-tauri", "Cargo.toml"),
+      "--release",
+      "--no-default-features",
+      "--bin",
+      "cc-sessions",
+    ];
+    if (args.cargoTargetDir) {
+      buildArgs.push("--target-dir", args.cargoTargetDir);
+    }
+    run("cargo", buildArgs);
+  }
+
+  const exePath = path.join(cargoTargetRoot, "release", cliExecutableName());
+  if (!(await exists(exePath))) {
+    throw new Error(`CLI executable was not found: ${exePath}. Run with --build-product first.`);
+  }
+
+  const packageName = `cc-sessions-cli-v${version}-${platform}`;
+  const stage = path.join(tempRoot, packageName);
+  const archivePath = path.join(outputRoot, `${packageName}.zip`);
+
+  await cleanDir(stage);
+  await fs.copyFile(exePath, path.join(stage, cliExecutableName()));
+
+  const readme = [
+    "CC Sessions CLI",
+    "",
+    "Run:",
+    `1. Unzip this package on ${platform}.`,
+    `2. Run ${process.platform === "win32" ? ".\\cc-sessions.exe" : "./cc-sessions"}.`,
+    "",
+    "This CLI build is compiled without the Tauri desktop feature. It does not require a desktop session or WebView runtime.",
+    "",
+    "Examples:",
+    "./cc-sessions list --limit 20",
+    "./cc-sessions repair diagnose --json",
+    "",
+  ].join("\n");
+  await fs.writeFile(path.join(stage, "README.txt"), readme, "utf8");
+
+  await writeZipFromDirectory(stage, archivePath);
+  console.log(`CLI package: ${archivePath}`);
 }
 
 function run(command, args) {

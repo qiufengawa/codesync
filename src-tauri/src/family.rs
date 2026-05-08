@@ -316,34 +316,46 @@ pub fn scan_archived_rollouts(codex_dir: &Path) -> Vec<PathBuf> {
     scan_rollouts_in(paths::archived_sessions_dir(codex_dir))
 }
 
-#[tauri::command]
-pub fn get_family_store(
-    codex_dir: String,
-    lock: tauri::State<'_, FamilyLock>,
-) -> AppResult<FamilyStore> {
-    with_lock(&lock, |_g| {
+pub fn get_family_store_with_lock(codex_dir: String, lock: &FamilyLock) -> AppResult<FamilyStore> {
+    with_lock(lock, |_g| {
         let p = PathBuf::from(&codex_dir);
         load(&p)
     })
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn verify_family_integrity(
+pub fn get_family_store(
     codex_dir: String,
     lock: tauri::State<'_, FamilyLock>,
+) -> AppResult<FamilyStore> {
+    get_family_store_with_lock(codex_dir, lock.inner())
+}
+
+pub fn verify_family_integrity_with_lock(
+    codex_dir: String,
+    lock: &FamilyLock,
 ) -> AppResult<FamilyIntegrityReport> {
-    with_lock(&lock, |_g| {
+    with_lock(lock, |_g| {
         let p = PathBuf::from(&codex_dir);
         verify_integrity(&p)
     })
 }
 
-/// 把 threads 表 + family store + current provider 聚合成 per-session 覆盖信息，
-/// 用于 Sessions 列表的 Badge 与 provider / 本地索引维护提示。
+#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn get_session_family_overlay(
+pub fn verify_family_integrity(
     codex_dir: String,
     lock: tauri::State<'_, FamilyLock>,
+) -> AppResult<FamilyIntegrityReport> {
+    verify_family_integrity_with_lock(codex_dir, lock.inner())
+}
+
+/// 把 threads 表 + family store + current provider 聚合成 per-session 覆盖信息，
+/// 用于 Sessions 列表的 Badge 与 provider / 本地索引维护提示。
+pub fn get_session_family_overlay_with_lock(
+    codex_dir: String,
+    lock: &FamilyLock,
 ) -> AppResult<Vec<FamilyOverlay>> {
     let codex = PathBuf::from(&codex_dir);
     let _g = lock.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -373,7 +385,7 @@ pub fn get_session_family_overlay(
     }
 
     // 2) 读 family store
-    let store = load(&codex).unwrap_or_default();
+    let store = load(&codex)?;
 
     // 3) 读 current provider
     let cur = crate::repair::read_current_provider_export(&codex);
@@ -422,6 +434,15 @@ pub fn get_session_family_overlay(
         });
     }
     Ok(out)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub fn get_session_family_overlay(
+    codex_dir: String,
+    lock: tauri::State<'_, FamilyLock>,
+) -> AppResult<Vec<FamilyOverlay>> {
+    get_session_family_overlay_with_lock(codex_dir, lock.inner())
 }
 
 fn compute_clone_state(

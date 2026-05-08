@@ -165,7 +165,7 @@ fn rollout_source_from_state(
 
 // ========================= 导出 =========================
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_session_bundles(
     provider: Option<String>,
     codex_dir: String,
@@ -511,7 +511,7 @@ fn export_one_claude(
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_all_bundles(
     provider: Option<String>,
     codex_dir: String,
@@ -568,7 +568,7 @@ pub fn export_all_bundles(
 
 // ========================= 列出 / 校验 =========================
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_bundles(src_dir: String, provider: Option<String>) -> AppResult<Vec<BundleListItem>> {
     let root = PathBuf::from(&src_dir);
     if !root.is_dir() {
@@ -604,7 +604,7 @@ pub fn list_bundles(src_dir: String, provider: Option<String>) -> AppResult<Vec<
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn verify_bundles(src_dir: String, provider: Option<String>) -> AppResult<Vec<BundleListItem>> {
     let mut items = list_bundles(src_dir, provider)?;
     for it in items.iter_mut() {
@@ -627,7 +627,7 @@ pub fn verify_bundles(src_dir: String, provider: Option<String>) -> AppResult<Ve
 
 // ========================= 导入 =========================
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn import_session_bundles(
     provider: Option<String>,
     src_dir: String,
@@ -1105,7 +1105,7 @@ mod tests {
 
 // ========================= zip 打包 =========================
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn pack_bundles_zip(src_dir: String, zip_path: String) -> AppResult<ZipReport> {
     let src = PathBuf::from(&src_dir);
     let out = PathBuf::from(&zip_path);
@@ -1266,7 +1266,7 @@ fn read_zip_u32(data: &[u8], start: usize, label: &str) -> AppResult<u32> {
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn unpack_zip(zip_path: String, dst_dir: String) -> AppResult<ZipReport> {
     // 流式解压：只支持 STORE 模式。只把尾部 + central directory 读进内存，
     // 每个文件的 payload 用 seek + Read::take + io::copy，不再一次性装全文件。

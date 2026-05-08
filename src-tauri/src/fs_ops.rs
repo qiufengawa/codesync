@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(feature = "desktop")]
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::error::{AppError, AppResult};
 use crate::paths;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn reveal_cwd(cwd: String) -> AppResult<()> {
     let cleaned = paths::strip_verbatim(&cwd);
     let path = PathBuf::from(&cleaned);
@@ -37,7 +38,7 @@ pub fn reveal_cwd(cwd: String) -> AppResult<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn open_latest_release_page() -> AppResult<()> {
     open_external("https://github.com/ccpopy/cc-sessions/releases/latest")
 }
@@ -67,17 +68,23 @@ fn open_external(url: &str) -> AppResult<()> {
     Ok(())
 }
 
+pub fn resume_command_text(provider: Option<String>, session_id: String) -> AppResult<String> {
+    let text = match provider.as_deref().unwrap_or("codex") {
+        "codex" => format!("codex resume {}", session_id),
+        "claude" => format!("claude --resume {}", session_id),
+        other => return Err(AppError::Other(format!("不支持的 provider: {other}"))),
+    };
+    Ok(text)
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn copy_resume_command(
     app: tauri::AppHandle,
     provider: Option<String>,
     session_id: String,
 ) -> AppResult<String> {
-    let text = match provider.as_deref().unwrap_or("codex") {
-        "codex" => format!("codex resume {}", session_id),
-        "claude" => format!("claude --resume {}", session_id),
-        other => return Err(AppError::Other(format!("不支持的 provider: {other}"))),
-    };
+    let text = resume_command_text(provider, session_id)?;
     app.clipboard()
         .write_text(text.clone())
         .map_err(|e| AppError::Other(e.to_string()))?;

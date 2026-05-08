@@ -52,6 +52,78 @@ Tauri 构建：
 npm run tauri:build
 ```
 
+## CLI / WSL 无桌面环境
+
+仓库同时提供无桌面 CLI 二进制 `cc-sessions`。CLI 构建关闭 Tauri `desktop` feature，不启动窗口，也不依赖 WebView / WebKitGTK，适合 WSL、服务器或只有 SSH 的环境。
+
+检查 CLI 构建：
+
+```bash
+npm run cli:check
+```
+
+构建 release 版 CLI：
+
+```bash
+npm run cli:build
+```
+
+构建后的二进制位于：
+
+```bash
+src-tauri/target/release/cc-sessions
+```
+
+Windows 下文件名为 `cc-sessions.exe`。也可以直接运行：
+
+```bash
+npm run cli:run -- list --limit 20
+npm run cli:run -- -- --json repair diagnose
+```
+
+直接启动交互式菜单：
+
+```bash
+npm run cli:run
+```
+
+Windows release 版构建后可直接运行：
+
+```powershell
+.\src-tauri\target\release\cc-sessions.exe
+```
+
+进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
+
+交互菜单里的“预览会话内容”默认只显示用户消息和助手消息，不显示工具调用、工具返回和元数据。如需排查完整 JSONL 事件流，可在预览模式中选择“全部事件”。
+
+常用命令：
+
+```bash
+cc-sessions
+cc-sessions menu
+cc-sessions list --limit 20
+cc-sessions --provider claude search "关键词"
+cc-sessions projects --archived
+cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
+cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
+cc-sessions repair diagnose --json
+cc-sessions repair index --dry-run
+cc-sessions bundle export --out-dir ./bundles --id <session-id>
+```
+
+默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖。需要机器可读输出时加 `--json`。
+
+### CLI 修复项说明
+
+CLI 和桌面端的修复功能只处理 Codex 本地索引和可见性问题，不会修改会话正文语义，也不会凭空恢复已经删除的 JSONL 会话文件。
+
+- `修复 session_index.jsonl`：扫描 `~/.codex/sessions/` 下仍存在的 active rollout 文件，重建 Codex 的 `session_index.jsonl`。它用于修复“会话文件还在，但索引缺失导致列表看不到”的问题，不是修复 JSONL 内容。
+- `重建 threads 表`：从 rollout 元数据重新写入或更新 `~/.codex/state_5.sqlite` 中的 `threads` 表。它用于修复 Codex 本地列表、搜索、标题、工作目录等数据库记录缺失或漂移的问题。
+- `清理 orphan 记录`：删除 `session_index.jsonl` 或 `threads` 表里指向已不存在 rollout 文件的残留记录。它不会删除仍存在的有效会话文件。
+- `克隆会话到 provider` / `批量克隆到当前 provider`：用于处理 Codex `model_provider` 切换后，历史会话 provider 与当前配置不一致导致的可见性或续聊问题。
+- `从事件创建回溯分支`：从某个稳定事件位置复制出新分支，并归档原 active 分支。该操作会写入本地 Codex 会话文件和索引，执行前会要求确认。
+
 ## 发布
 
 项目中以下文件的版本号需保持一致：
@@ -71,6 +143,8 @@ git push origin v0.2.6
 工作流会在 Windows、macOS 和 Linux 上分别构建 Tauri 安装产物。macOS 打包要求 `src-tauri/icons/icon.icns` 存在，本仓库已提交 Tauri 生成的跨平台图标文件。
 
 Windows Release 会额外上传 `cc-session-manager-portable-v版本号-windows.exe`，这是无需安装即可直接运行的便携版可执行文件。
+
+Release 也会在 Windows、macOS 和 Linux job 中分别上传 `cc-sessions-cli-v版本号-平台.zip`，这是不依赖桌面环境的 CLI 版本。远程仓库推送版本 tag 触发发布时，CLI 包会和桌面安装包一起出现在同一个 GitHub Release 中。
 
 ## 手动打包
 
@@ -92,6 +166,12 @@ npm run package:portable
 
 ```bash
 npm run package:product
+```
+
+生成 CLI 包：
+
+```bash
+npm run package:cli
 ```
 
 打包输出位于 `release/` 目录，该目录不会提交到仓库。

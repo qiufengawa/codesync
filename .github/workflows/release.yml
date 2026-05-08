@@ -94,8 +94,31 @@ jobs:
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
             See README.md for installation and usage notes.
+            This release includes desktop packages and platform-specific cc-sessions CLI packages.
           releaseDraft: false
           prerelease: false
+
+      - name: Create CLI package
+        shell: pwsh
+        run: node scripts/package-release.mjs --target cli --build-product
+
+      - name: Upload CLI package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $platform = switch ("${{ runner.os }}") {
+            "Windows" { "windows" }
+            "macOS" { "macos" }
+            "Linux" { "linux" }
+            default { throw "Unsupported runner OS: ${{ runner.os }}" }
+          }
+          $asset = "release/cc-sessions-cli-v$version-$platform.zip"
+          if (!(Test-Path $asset)) {
+            throw "CLI package was not found: $asset"
+          }
+          gh release upload "${{ github.ref_name }}" $asset --clobber
 
       - name: Create Windows portable executable
         if: matrix.platform == 'windows-latest'

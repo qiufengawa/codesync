@@ -1,11 +1,14 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::error::{AppError, AppResult};
+#[cfg(feature = "desktop")]
+use crate::error::AppError;
+use crate::error::AppResult;
 use crate::models::{DirValidation, Settings};
 use crate::paths;
 use crate::state_db;
 
+#[cfg(feature = "desktop")]
 fn config_file(app: &tauri::AppHandle) -> AppResult<PathBuf> {
     use tauri::Manager;
     let dir = app
@@ -16,41 +19,54 @@ fn config_file(app: &tauri::AppHandle) -> AppResult<PathBuf> {
     Ok(dir.join("settings.json"))
 }
 
-#[tauri::command]
-pub fn get_settings(app: tauri::AppHandle) -> AppResult<Settings> {
-    let file = config_file(&app)?;
+pub fn read_settings_file(file: &Path) -> AppResult<Settings> {
     if !file.exists() {
         return Ok(Settings::default());
     }
     let raw = fs::read_to_string(&file)?;
-    let parsed: Settings = serde_json::from_str(&raw).unwrap_or_default();
+    let parsed: Settings = serde_json::from_str(&raw)?;
     Ok(parsed)
 }
 
-#[tauri::command]
-pub fn save_settings(app: tauri::AppHandle, settings: Settings) -> AppResult<()> {
-    let file = config_file(&app)?;
+pub fn write_settings_file(file: &Path, settings: &Settings) -> AppResult<()> {
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let content = serde_json::to_string_pretty(&settings)?;
     fs::write(file, content)?;
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
+pub fn get_settings(app: tauri::AppHandle) -> AppResult<Settings> {
+    let file = config_file(&app)?;
+    read_settings_file(&file)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub fn save_settings(app: tauri::AppHandle, settings: Settings) -> AppResult<()> {
+    let file = config_file(&app)?;
+    write_settings_file(&file, &settings)
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn default_codex_dir() -> String {
     paths::default_codex_dir().to_string_lossy().into_owned()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn default_claude_dir() -> String {
     paths::default_claude_dir().to_string_lossy().into_owned()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn validate_codex_dir(path: String) -> AppResult<DirValidation> {
     let p = PathBuf::from(&path);
     let (exists, has_state, has_sessions) = paths::validate_codex_dir(&p);
@@ -67,7 +83,7 @@ pub fn validate_codex_dir(path: String) -> AppResult<DirValidation> {
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn validate_claude_dir(path: String) -> AppResult<DirValidation> {
     let p = PathBuf::from(&path);
     let (exists, has_projects) = paths::validate_claude_dir(&p);

@@ -1,22 +1,24 @@
-mod backup;
-mod bundle;
-mod claude_sessions;
-mod error;
-mod family;
-mod fs_ops;
-mod logs_db;
-mod models;
-mod paths;
-mod repair;
-mod rollout;
-mod sessions;
-mod settings;
-mod state_db;
-mod stats;
+pub mod backup;
+pub mod bundle;
+pub mod claude_sessions;
+pub mod error;
+pub mod family;
+pub mod fs_ops;
+pub mod logs_db;
+pub mod models;
+pub mod paths;
+pub mod repair;
+pub mod rollout;
+pub mod sessions;
+pub mod settings;
+pub mod state_db;
+pub mod stats;
 
+#[cfg(feature = "desktop")]
 #[cfg(debug_assertions)]
 use tauri::Manager;
 
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

@@ -107,7 +107,7 @@ fn query_summaries(
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_sessions(
     provider: Option<String>,
     codex_dir: String,
@@ -129,7 +129,7 @@ pub fn list_sessions(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn group_sessions_by_project(
     provider: Option<String>,
     codex_dir: String,
@@ -158,7 +158,7 @@ pub fn group_sessions_by_project(
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn search_sessions(
     provider: Option<String>,
     codex_dir: String,
@@ -224,7 +224,7 @@ pub fn search_sessions(
     Ok(hits)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn set_archived(
     provider: Option<String>,
     codex_dir: String,
@@ -244,7 +244,7 @@ pub fn set_archived(
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn delete_session(
     provider: Option<String>,
     codex_dir: String,
@@ -265,7 +265,7 @@ pub fn delete_session(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn delete_sessions(
     provider: Option<String>,
     codex_dir: String,

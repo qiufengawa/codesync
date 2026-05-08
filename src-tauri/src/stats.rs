@@ -78,7 +78,7 @@ fn stat_sessions(
     ))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn stats_kpi(
     provider: Option<String>,
     codex_dir: String,
@@ -117,7 +117,7 @@ pub fn stats_kpi(
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn stats_timeseries(
     provider: Option<String>,
     codex_dir: String,
@@ -154,7 +154,7 @@ pub fn stats_timeseries(
         .collect())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn stats_by_project(
     provider: Option<String>,
     codex_dir: String,
@@ -197,7 +197,7 @@ pub fn stats_by_project(
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn stats_by_model(
     provider: Option<String>,
     codex_dir: String,
@@ -243,7 +243,7 @@ pub fn stats_by_model(
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn stats_heatmap(
     provider: Option<String>,
     codex_dir: String,
@@ -321,15 +321,19 @@ mod tests {
                 created_at INTEGER,
                 updated_at INTEGER,
                 archived INTEGER,
-                git_branch TEXT
+                git_branch TEXT,
+                source TEXT,
+                agent_nickname TEXT,
+                agent_role TEXT
             )",
             [],
         )?;
         conn.execute(
             "INSERT INTO threads (
                 id, rollout_path, cwd, title, first_user_message, model, reasoning_effort,
-                tokens_used, created_at, updated_at, archived, git_branch
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 11, 1770000000, 1770000300, 0, NULL)",
+                tokens_used, created_at, updated_at, archived, git_branch, source,
+                agent_nickname, agent_role
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 11, 1770000000, 1770000300, 0, NULL, NULL, NULL, NULL)",
             (
                 "codex-1",
                 rollout.to_string_lossy().into_owned(),

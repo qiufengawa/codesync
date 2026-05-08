@@ -131,7 +131,7 @@ fn trim(s: &str, n: usize) -> String {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_session_head(
     provider: Option<String>,
     rollout_path: String,
@@ -140,7 +140,7 @@ pub fn preview_session_head(
     preview_range_by_provider(provider, &rollout_path, 0, limit)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_session_range(
     provider: Option<String>,
     rollout_path: String,
@@ -191,7 +191,7 @@ fn preview_range_impl(path: &str, offset: usize, limit: usize) -> AppResult<Vec<
     Ok(out)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_session_meta(
     provider: Option<String>,
     rollout_path: String,

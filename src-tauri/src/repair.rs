@@ -71,7 +71,7 @@ fn effective_current_provider(codex_dir: &Path) -> String {
         .unwrap_or_else(|| DEFAULT_PROVIDER.to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_provider_info(codex_dir: String) -> AppResult<ProviderInfo> {
     let p = PathBuf::from(&codex_dir);
     let cfg = paths::config_toml_path(&p);
@@ -321,7 +321,7 @@ fn desktop_visible_source(payload: &Value) -> String {
     DEFAULT_THREAD_SOURCE.to_string()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn diagnose_codex_state(codex_dir: String) -> AppResult<DiagnosticReport> {
     let codex = PathBuf::from(&codex_dir);
 
@@ -419,7 +419,7 @@ pub fn diagnose_codex_state(codex_dir: String) -> AppResult<DiagnosticReport> {
 
 // ========================= 重建 session_index.jsonl =========================
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn repair_session_index(codex_dir: String, dry_run: bool) -> AppResult<IndexRepairReport> {
     let codex = PathBuf::from(&codex_dir);
     let rollouts = family::scan_rollouts(&codex);
@@ -498,7 +498,7 @@ pub fn repair_session_index(codex_dir: String, dry_run: bool) -> AppResult<Index
 // 与 `repair_session_index`/`rebuild_threads_table` 不同：此命令**只删除**
 // 指向已消失 rollout 的孤儿行（session_index.jsonl 里多出来的 id、threads
 // 表里多出来的 id），不会从 rollout 重建。适合只想"把残留清干净"的场景。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn prune_orphan_entries(
     codex_dir: String,
     prune_index: bool,
@@ -638,7 +638,7 @@ const THREADS_COLS: &[&str] = &[
     "updated_at_ms",
 ];
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn rebuild_threads_table(codex_dir: String, dry_run: bool) -> AppResult<ThreadsRebuildReport> {
     let codex = PathBuf::from(&codex_dir);
     let active_rollouts = family::scan_rollouts(&codex);
@@ -1520,6 +1520,19 @@ fn resolve_fork_source_rollout(
     Ok((source_abs, brief))
 }
 
+pub fn fork_session_at_event_with_lock(
+    codex_dir: String,
+    session_id: String,
+    rollout_path: String,
+    event_index: usize,
+    lock: &family::FamilyLock,
+) -> AppResult<ForkSessionReport> {
+    family::with_lock(lock, |_g| {
+        fork_session_at_event_locked(codex_dir, session_id, rollout_path, event_index)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn fork_session_at_event(
     codex_dir: String,
@@ -1528,9 +1541,13 @@ pub fn fork_session_at_event(
     event_index: usize,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<ForkSessionReport> {
-    family::with_lock(&lock, |_g| {
-        fork_session_at_event_locked(codex_dir, session_id, rollout_path, event_index)
-    })
+    fork_session_at_event_with_lock(
+        codex_dir,
+        session_id,
+        rollout_path,
+        event_index,
+        lock.inner(),
+    )
 }
 
 fn fork_session_at_event_locked(
@@ -1660,6 +1677,20 @@ fn fork_session_at_event_locked(
 }
 
 /// 把一个会话克隆到指定 provider（或当前 provider）。
+pub fn clone_session_for_provider_with_lock(
+    codex_dir: String,
+    session_id: String,
+    target_provider: Option<String>,
+    strategy: SwitchStrategy,
+    dry_run: bool,
+    lock: &family::FamilyLock,
+) -> AppResult<CloneReport> {
+    family::with_lock(lock, |_g| {
+        clone_session_for_provider_locked(codex_dir, session_id, target_provider, strategy, dry_run)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn clone_session_for_provider(
     codex_dir: String,
@@ -1669,9 +1700,14 @@ pub fn clone_session_for_provider(
     dry_run: bool,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<CloneReport> {
-    family::with_lock(&lock, |_g| {
-        clone_session_for_provider_locked(codex_dir, session_id, target_provider, strategy, dry_run)
-    })
+    clone_session_for_provider_with_lock(
+        codex_dir,
+        session_id,
+        target_provider,
+        strategy,
+        dry_run,
+        lock.inner(),
+    )
 }
 
 fn clone_session_for_provider_locked(
@@ -2035,14 +2071,13 @@ fn list_mismatched_session_ids(codex: &Path, target_provider: &str) -> AppResult
 }
 
 /// 对所有 active 分支 provider ≠ 当前 provider 的家族批量克隆。
-#[tauri::command]
-pub fn batch_clone_for_current_provider(
+pub fn batch_clone_for_current_provider_with_lock(
     codex_dir: String,
     strategy: SwitchStrategy,
     dry_run: bool,
-    lock: tauri::State<'_, family::FamilyLock>,
+    lock: &family::FamilyLock,
 ) -> AppResult<Vec<CloneReport>> {
-    family::with_lock(&lock, |_g| {
+    family::with_lock(lock, |_g| {
         let codex = PathBuf::from(&codex_dir);
         let cur = effective_current_provider(&codex);
 
@@ -2073,7 +2108,30 @@ pub fn batch_clone_for_current_provider(
     })
 }
 
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub fn batch_clone_for_current_provider(
+    codex_dir: String,
+    strategy: SwitchStrategy,
+    dry_run: bool,
+    lock: tauri::State<'_, family::FamilyLock>,
+) -> AppResult<Vec<CloneReport>> {
+    batch_clone_for_current_provider_with_lock(codex_dir, strategy, dry_run, lock.inner())
+}
+
 /// 回滚：把家族的 active 切回某个历史分支（把当前 active 归档，目标分支从归档恢复）。
+pub fn rollback_family_active_with_lock(
+    codex_dir: String,
+    family_id: String,
+    target_branch_id: String,
+    lock: &family::FamilyLock,
+) -> AppResult<()> {
+    family::with_lock(lock, |_g| {
+        rollback_family_active_locked(codex_dir, family_id, target_branch_id)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn rollback_family_active(
     codex_dir: String,
@@ -2081,9 +2139,7 @@ pub fn rollback_family_active(
     target_branch_id: String,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<()> {
-    family::with_lock(&lock, |_g| {
-        rollback_family_active_locked(codex_dir, family_id, target_branch_id)
-    })
+    rollback_family_active_with_lock(codex_dir, family_id, target_branch_id, lock.inner())
 }
 
 fn rollback_family_active_locked(
@@ -2161,6 +2217,18 @@ fn rollback_family_active_locked(
 
 /// 删除一个家族分支：清理 family.chain + 复用 sessions::delete_one 的全套清理。
 /// 不允许删除 active 分支（必须先切换或回滚）。
+pub fn delete_family_branch_with_lock(
+    codex_dir: String,
+    family_id: String,
+    branch_id: String,
+    lock: &family::FamilyLock,
+) -> AppResult<crate::models::DeleteResult> {
+    family::with_lock(lock, |_g| {
+        delete_family_branch_locked(codex_dir, family_id, branch_id)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn delete_family_branch(
     codex_dir: String,
@@ -2168,9 +2236,7 @@ pub fn delete_family_branch(
     branch_id: String,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<crate::models::DeleteResult> {
-    family::with_lock(&lock, |_g| {
-        delete_family_branch_locked(codex_dir, family_id, branch_id)
-    })
+    delete_family_branch_with_lock(codex_dir, family_id, branch_id, lock.inner())
 }
 
 fn delete_family_branch_locked(
@@ -2227,15 +2293,24 @@ fn delete_family_branch_locked(
 
 /// 读取每个非 active 分支相对当前 active 分支的可同步状态。
 /// 比较时跳过第 1 行 session_meta，因为 clone 后 id/provider 不同是正常的。
+pub fn get_family_branch_sync_states_with_lock(
+    codex_dir: String,
+    family_id: String,
+    lock: &family::FamilyLock,
+) -> AppResult<Vec<BranchSyncState>> {
+    family::with_lock(lock, |_g| {
+        get_family_branch_sync_states_locked(codex_dir, family_id)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_family_branch_sync_states(
     codex_dir: String,
     family_id: String,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<Vec<BranchSyncState>> {
-    family::with_lock(&lock, |_g| {
-        get_family_branch_sync_states_locked(codex_dir, family_id)
-    })
+    get_family_branch_sync_states_with_lock(codex_dir, family_id, lock.inner())
 }
 
 fn get_family_branch_sync_states_locked(
@@ -2319,6 +2394,18 @@ fn get_family_branch_sync_states_locked(
 /// 场景：克隆 / 修复后继续在旧分支（如 archived 的 custom）上追加了新消息，
 /// 希望这部分增量也能在当前 provider 的 active 分支里可见。
 /// 策略：仅当源分支是 active 分支的"行级前缀超集"时允许合并。
+pub fn sync_branch_into_active_with_lock(
+    codex_dir: String,
+    family_id: String,
+    source_branch_id: String,
+    lock: &family::FamilyLock,
+) -> AppResult<SyncBranchReport> {
+    family::with_lock(lock, |_g| {
+        sync_branch_into_active_locked(codex_dir, family_id, source_branch_id)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn sync_branch_into_active(
     codex_dir: String,
@@ -2326,9 +2413,7 @@ pub fn sync_branch_into_active(
     source_branch_id: String,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<SyncBranchReport> {
-    family::with_lock(&lock, |_g| {
-        sync_branch_into_active_locked(codex_dir, family_id, source_branch_id)
-    })
+    sync_branch_into_active_with_lock(codex_dir, family_id, source_branch_id, lock.inner())
 }
 
 fn sync_branch_into_active_locked(
@@ -2352,6 +2437,22 @@ fn sync_branch_into_active_locked(
 /// 把当前 active 分支新增内容同步到某个历史分支。
 /// 场景：当前 provider 继续对话后，历史 provider 分支落后；同步后再切回该 provider
 /// 时也能带上当前分支的新增上下文。
+pub fn sync_active_into_branch_with_lock(
+    codex_dir: String,
+    family_id: String,
+    target_branch_id: String,
+    lock: &family::FamilyLock,
+) -> AppResult<BranchSyncReport> {
+    family::with_lock(lock, |_g| {
+        let active_id = active_branch_id(&codex_dir, &family_id)?;
+        if active_id == target_branch_id {
+            return Err(AppError::Other("目标分支即为当前 active，无需同步".into()));
+        }
+        append_branch_extras_locked(codex_dir, family_id, active_id, target_branch_id)
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn sync_active_into_branch(
     codex_dir: String,
@@ -2359,13 +2460,7 @@ pub fn sync_active_into_branch(
     target_branch_id: String,
     lock: tauri::State<'_, family::FamilyLock>,
 ) -> AppResult<BranchSyncReport> {
-    family::with_lock(&lock, |_g| {
-        let active_id = active_branch_id(&codex_dir, &family_id)?;
-        if active_id == target_branch_id {
-            return Err(AppError::Other("目标分支即为当前 active，无需同步".into()));
-        }
-        append_branch_extras_locked(codex_dir, family_id, active_id, target_branch_id)
-    })
+    sync_active_into_branch_with_lock(codex_dir, family_id, target_branch_id, lock.inner())
 }
 
 fn active_branch_id(codex_dir: &str, family_id: &str) -> AppResult<String> {
