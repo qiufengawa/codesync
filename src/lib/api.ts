@@ -97,6 +97,7 @@ export type DeleteResult = {
   id: string;
   threads_rows_deleted: number;
   logs_rows_deleted: number;
+  history_rows_deleted: number;
   rollout_deleted: boolean;
   rollout_missing: boolean;
   ok: boolean;

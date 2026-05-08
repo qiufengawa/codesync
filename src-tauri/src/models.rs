@@ -88,6 +88,7 @@ pub struct DeleteResult {
     pub id: String,
     pub threads_rows_deleted: u32,
     pub logs_rows_deleted: u32,
+    pub history_rows_deleted: u32,
     pub rollout_deleted: bool,
     pub rollout_missing: bool,
     pub ok: bool,

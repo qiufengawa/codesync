@@ -282,6 +282,7 @@ pub fn delete_sessions(
                         id: id.clone(),
                         threads_rows_deleted: 0,
                         logs_rows_deleted: 0,
+                        history_rows_deleted: 0,
                         rollout_deleted: false,
                         rollout_missing: false,
                         ok: false,
@@ -302,6 +303,7 @@ pub fn delete_sessions(
                         id: id.clone(),
                         threads_rows_deleted: 0,
                         logs_rows_deleted: 0,
+                        history_rows_deleted: 0,
                         rollout_deleted: false,
                         rollout_missing: false,
                         ok: false,
@@ -319,6 +321,7 @@ fn delete_one_claude(claude_dir: &Path, id: &str) -> AppResult<DeleteResult> {
         id: id.to_string(),
         threads_rows_deleted: 0,
         logs_rows_deleted: 0,
+        history_rows_deleted: 0,
         rollout_deleted: false,
         rollout_missing: false,
         ok: false,
@@ -365,6 +368,14 @@ fn delete_one_claude(claude_dir: &Path, id: &str) -> AppResult<DeleteResult> {
         let _ = fs::remove_dir(parent);
     }
 
+    let history_path = paths::history_path(claude_dir);
+    if history_path.exists() {
+        match filter_history_file(&history_path, id) {
+            Ok(rows) => result.history_rows_deleted = rows,
+            Err(e) => append_error(&mut result, format!("history filter failed: {}", e)),
+        }
+    }
+
     result.ok = result.rollout_deleted || result.rollout_missing;
     Ok(result)
 }
@@ -399,6 +410,7 @@ fn delete_one(codex_dir: &Path, id: &str) -> AppResult<DeleteResult> {
         id: id.to_string(),
         threads_rows_deleted: 0,
         logs_rows_deleted: 0,
+        history_rows_deleted: 0,
         rollout_deleted: false,
         rollout_missing: false,
         ok: false,
@@ -514,4 +526,86 @@ fn filter_index_file(path: &Path, id: &str) -> AppResult<()> {
     }
     fs::rename(&tmp, path).map_err(AppError::Io)?;
     Ok(())
+}
+
+fn filter_history_file(path: &Path, id: &str) -> AppResult<u32> {
+    let content = fs::read_to_string(path)?;
+    let tmp = path.with_extension("jsonl.tmp");
+    let mut removed = 0u32;
+    {
+        use std::io::Write;
+        let mut f = fs::File::create(&tmp)?;
+        for line in content.lines() {
+            if history_line_matches_session(line, id) {
+                removed += 1;
+                continue;
+            }
+            writeln!(f, "{}", line)?;
+        }
+    }
+    fs::rename(&tmp, path).map_err(AppError::Io)?;
+    Ok(removed)
+}
+
+fn history_line_matches_session(line: &str, id: &str) -> bool {
+    if line.is_empty() {
+        return false;
+    }
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(v) => {
+            v.get("session_id").and_then(|x| x.as_str()) == Some(id)
+                || v.get("id").and_then(|x| x.as_str()) == Some(id)
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("cc-sessions-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn delete_claude_session_prunes_matching_history_rows_only() {
+        let claude = temp_dir("claude-delete-history");
+        let project = claude.join("projects").join("-tmp-project");
+        fs::create_dir_all(&project).expect("create project dir");
+
+        let target_id = "claude-target-session";
+        let other_id = "claude-other-session";
+        fs::write(project.join(format!("{target_id}.jsonl")), "{}\n").expect("write session");
+        fs::write(
+            claude.join("history.jsonl"),
+            format!(
+                "{{\"session_id\":\"{target_id}\",\"message\":\"first\"}}\n\
+                 {{\"id\":\"{target_id}\",\"message\":\"second\"}}\n\
+                 not-json\n\
+                 {{\"session_id\":\"{other_id}\",\"message\":\"keep\"}}\n"
+            ),
+        )
+        .expect("write history");
+
+        let result = delete_one_claude(&claude, target_id).expect("delete claude session");
+
+        assert!(result.ok);
+        assert!(result.rollout_deleted);
+        assert_eq!(result.history_rows_deleted, 2);
+        assert!(!project.join(format!("{target_id}.jsonl")).exists());
+
+        let history = fs::read_to_string(claude.join("history.jsonl")).expect("read history");
+        assert!(!history.contains(target_id));
+        assert!(history.contains(other_id));
+        assert!(history.contains("not-json"));
+
+        fs::remove_dir_all(claude).expect("cleanup temp dir");
+    }
 }
