@@ -160,6 +160,8 @@ pub struct ManifestSession {
     pub model: Option<String>,
     pub bytes_rollout: u64,
     pub logs_count: u32,
+    #[serde(default)]
+    pub history_rows: u32,
     pub sha256_rollout: String,
 }
 
@@ -175,6 +177,7 @@ pub struct RestoreResult {
     pub ok: bool,
     pub threads_inserted: bool,
     pub logs_inserted: u32,
+    pub history_appended: u32,
     pub rollout_copied: bool,
     pub conflict: bool,
     pub error: Option<String>,

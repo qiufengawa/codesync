@@ -607,7 +607,7 @@ pub fn diagnose_claude_history_orphans(claude_dir: String) -> AppResult<HistoryO
                 continue;
             }
             history_rows += 1;
-            match history_line_session_id(&line) {
+            match crate::history::line_session_id(&line) {
                 Some(id) if session_ids.contains(&id) => linked_rows += 1,
                 Some(id) => {
                     orphan_rows += 1;
@@ -645,7 +645,7 @@ pub fn prune_claude_history_orphans(
         let file = fs::File::open(&history_path)?;
         for line in BufReader::new(file).lines() {
             let line = line?;
-            if let Some(id) = history_line_session_id(&line) {
+            if let Some(id) = crate::history::line_session_id(&line) {
                 if !session_ids.contains(&id) {
                     removed_rows += 1;
                     orphan_ids.insert(id);
@@ -684,21 +684,6 @@ fn claude_history_context(claude_dir: String) -> AppResult<(PathBuf, BTreeSet<St
         .map(|session| session.id)
         .collect::<BTreeSet<_>>();
     Ok((paths::history_path(&claude), session_ids))
-}
-
-fn history_line_session_id(line: &str) -> Option<String> {
-    let value = serde_json::from_str::<Value>(line).ok()?;
-    for key in ["sessionId", "session_id", "id"] {
-        if let Some(id) = value
-            .get(key)
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-        {
-            return Some(id.to_string());
-        }
-    }
-    None
 }
 
 fn salvage_id_from_filename(p: &Path) -> Option<String> {

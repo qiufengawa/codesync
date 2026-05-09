@@ -128,6 +128,7 @@ export type ManifestSession = {
   model: string | null;
   bytes_rollout: number;
   logs_count: number;
+  history_rows: number;
   sha256_rollout: string;
 };
 
@@ -149,6 +150,7 @@ export type RestoreResult = {
   ok: boolean;
   threads_inserted: boolean;
   logs_inserted: number;
+  history_appended: number;
   rollout_copied: boolean;
   conflict: boolean;
   error: string | null;

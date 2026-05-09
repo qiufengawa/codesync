@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -93,6 +93,12 @@ pub fn create_backup(
         }
         backup_threads.push(thread);
     }
+    let history_ids = backup_threads
+        .iter()
+        .map(|thread| thread.id.clone())
+        .collect::<HashSet<_>>();
+    let history_index =
+        crate::history::collect_lines_for_ids(&paths::history_path(&codex), &history_ids)?;
 
     fs::create_dir_all(tmp.join("sessions"))?;
 
@@ -153,6 +159,11 @@ pub fn create_backup(
             }
         }
 
+        let history_rows = history_index
+            .get(&thread.id)
+            .map(|rows| rows.len() as u32)
+            .unwrap_or(0);
+
         manifest.sessions.push(ManifestSession {
             provider: Some(PROVIDER_CODEX.to_string()),
             id: thread.id.clone(),
@@ -167,9 +178,15 @@ pub fn create_backup(
             model: thread.model.clone(),
             bytes_rollout: bytes,
             logs_count,
+            history_rows,
             sha256_rollout: sha,
         });
     }
+    write_backup_history(
+        &tmp,
+        backup_threads.iter().map(|thread| thread.id.as_str()),
+        &history_index,
+    )?;
 
     fs::write(
         tmp.join("manifest.json"),
@@ -214,6 +231,9 @@ fn create_claude_backup(
     let sessions = crate::claude_sessions::scan_sessions(&claude)?;
     let by_id: HashMap<String, crate::models::SessionSummary> =
         sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
+    let history_ids = ids.iter().cloned().collect::<HashSet<_>>();
+    let history_index =
+        crate::history::collect_lines_for_ids(&paths::history_path(&claude), &history_ids)?;
 
     let mut manifest = Manifest {
         version: 2,
@@ -258,6 +278,11 @@ fn create_claude_backup(
             }
         }
 
+        let history_rows = history_index
+            .get(&session.id)
+            .map(|rows| rows.len() as u32)
+            .unwrap_or(0);
+
         manifest.sessions.push(ManifestSession {
             provider: Some(PROVIDER_CLAUDE.to_string()),
             id: session.id.clone(),
@@ -272,9 +297,11 @@ fn create_claude_backup(
             model: session.model.clone(),
             bytes_rollout: bytes,
             logs_count: 0,
+            history_rows,
             sha256_rollout: sha,
         });
     }
+    write_backup_history(&tmp, ids.iter().map(String::as_str), &history_index)?;
 
     fs::write(
         tmp.join("manifest.json"),
@@ -444,6 +471,20 @@ fn summarize_backup(path: &Path) -> AppResult<BackupSummary> {
     })
 }
 
+fn write_backup_history<'a>(
+    backup_dir: &Path,
+    ids: impl Iterator<Item = &'a str>,
+    history_index: &HashMap<String, Vec<String>>,
+) -> AppResult<u32> {
+    let mut lines = Vec::new();
+    for id in ids {
+        if let Some(rows) = history_index.get(id) {
+            lines.extend(rows.iter().cloned());
+        }
+    }
+    crate::history::write_lines(&backup_dir.join("history.jsonl"), &lines)
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_backups(backup_dir: String, provider: Option<String>) -> AppResult<Vec<BackupSummary>> {
     let root = PathBuf::from(&backup_dir);
@@ -610,6 +651,7 @@ pub fn restore_all(
                 ok: false,
                 threads_inserted: false,
                 logs_inserted: 0,
+                history_appended: 0,
                 rollout_copied: false,
                 conflict: false,
                 error: Some(e.to_string()),
@@ -642,6 +684,7 @@ fn restore_one_claude(
         ok: false,
         threads_inserted: false,
         logs_inserted: 0,
+        history_appended: 0,
         rollout_copied: false,
         conflict: false,
         error: None,
@@ -679,6 +722,11 @@ fn restore_one_claude(
             }
         }
     }
+    result.history_appended = crate::history::append_from_file(
+        &paths::history_path(claude),
+        &backup.join("history.jsonl"),
+        &target.id,
+    )?;
 
     result.ok = true;
     Ok(result)
@@ -695,6 +743,7 @@ fn restore_one(
         ok: false,
         threads_inserted: false,
         logs_inserted: 0,
+        history_appended: 0,
         rollout_copied: false,
         conflict: false,
         error: None,
@@ -831,6 +880,11 @@ fn restore_one(
             }
         }
     }
+    result.history_appended = crate::history::append_from_file(
+        &paths::history_path(codex),
+        &backup.join("history.jsonl"),
+        &target.id,
+    )?;
 
     // 6) 更新 session_index.jsonl（append 一行，若已存在则跳过）
     let index_path = codex.join("session_index.jsonl");
@@ -946,6 +1000,14 @@ mod tests {
             dir.join(format!("{id}.jsonl")),
             format!("{}\n", serde_json::to_string(&line)?),
         )?;
+        fs::write(
+            claude.join("history.jsonl"),
+            format!(
+                "{{\"sessionId\":\"{id}\",\"display\":\"keep one\"}}\n\
+                 {{\"session_id\":\"other-session\",\"display\":\"ignore\"}}\n\
+                 {{\"id\":\"{id}\",\"display\":\"keep two\"}}\n"
+            ),
+        )?;
         Ok(())
     }
 
@@ -967,10 +1029,17 @@ mod tests {
             Some("test".to_string()),
         )?;
         assert_eq!(summary.provider.as_deref(), Some(PROVIDER_CLAUDE));
+        let backup_path = summary.path.clone();
+        let detail = open_backup(backup_path.clone())?;
+        assert_eq!(detail.manifest.sessions[0].history_rows, 2);
+        let backup_history = fs::read_to_string(PathBuf::from(&backup_path).join("history.jsonl"))?;
+        assert!(backup_history.contains("keep one"));
+        assert!(backup_history.contains("keep two"));
+        assert!(!backup_history.contains("ignore"));
 
         let restored = restore_session(
             Some(PROVIDER_CLAUDE.to_string()),
-            summary.path,
+            backup_path,
             String::new(),
             Some(restore_claude.to_string_lossy().into_owned()),
             "claude-backup-1".to_string(),
@@ -978,10 +1047,15 @@ mod tests {
         )?;
 
         assert!(restored.ok);
+        assert_eq!(restored.history_appended, 2);
         assert!(paths::claude_projects_dir(&restore_claude)
             .join("sample-project")
             .join("claude-backup-1.jsonl")
             .is_file());
+        let restored_history = fs::read_to_string(restore_claude.join("history.jsonl"))?;
+        assert!(restored_history.contains("keep one"));
+        assert!(restored_history.contains("keep two"));
+        assert!(!restored_history.contains("ignore"));
         fs::remove_dir_all(root).ok();
         Ok(())
     }

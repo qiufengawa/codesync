@@ -4,6 +4,7 @@ pub mod claude_sessions;
 pub mod error;
 pub mod family;
 pub mod fs_ops;
+pub mod history;
 pub mod logs_db;
 pub mod models;
 pub mod paths;

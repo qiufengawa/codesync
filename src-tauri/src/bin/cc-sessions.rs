@@ -440,10 +440,11 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 println!("sessions");
                 for session in &detail.manifest.sessions {
                     println!(
-                        "{}\t{}\t{}\t{}",
+                        "{}\t{}\t{}\thistory={}\t{}",
                         session.provider.as_deref().unwrap_or(""),
                         session.id,
                         session.bytes_rollout,
+                        session.history_rows,
                         session.title
                     );
                 }
@@ -485,7 +486,10 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 overwrite,
             )?;
             output(ctx, &result, |result| {
-                println!("{}\tok={}", result.id, result.ok);
+                println!(
+                    "{}\tok={}\thistory_appended={}",
+                    result.id, result.ok, result.history_appended
+                );
                 if let Some(error) = &result.error {
                     println!("error\t{error}");
                 }
@@ -504,7 +508,10 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             )?;
             output(ctx, &results, |items| {
                 for item in items {
-                    println!("{}\tok={}", item.id, item.ok);
+                    println!(
+                        "{}\tok={}\thistory_appended={}",
+                        item.id, item.ok, item.history_appended
+                    );
                     if let Some(error) = &item.error {
                         println!("{}\terror={}", item.id, error);
                     }

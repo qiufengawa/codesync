@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 
 use crate::error::{AppError, AppResult};
+use crate::history;
 use crate::logs_db;
 use crate::models::{DeleteResult, ProjectGroup, SessionSummary};
 use crate::paths;
@@ -369,7 +370,7 @@ fn delete_one_claude(claude_dir: &Path, id: &str) -> AppResult<DeleteResult> {
 
     let history_path = paths::history_path(claude_dir);
     if history_path.exists() {
-        match filter_history_file(&history_path, id) {
+        match history::filter_file(&history_path, id) {
             Ok(rows) => result.history_rows_deleted = rows,
             Err(e) => append_error(&mut result, format!("history filter failed: {}", e)),
         }
@@ -525,39 +526,6 @@ fn filter_index_file(path: &Path, id: &str) -> AppResult<()> {
     }
     fs::rename(&tmp, path).map_err(AppError::Io)?;
     Ok(())
-}
-
-fn filter_history_file(path: &Path, id: &str) -> AppResult<u32> {
-    let content = fs::read_to_string(path)?;
-    let tmp = path.with_extension("jsonl.tmp");
-    let mut removed = 0u32;
-    {
-        use std::io::Write;
-        let mut f = fs::File::create(&tmp)?;
-        for line in content.lines() {
-            if history_line_matches_session(line, id) {
-                removed += 1;
-                continue;
-            }
-            writeln!(f, "{}", line)?;
-        }
-    }
-    fs::rename(&tmp, path).map_err(AppError::Io)?;
-    Ok(removed)
-}
-
-fn history_line_matches_session(line: &str, id: &str) -> bool {
-    if line.is_empty() {
-        return false;
-    }
-    match serde_json::from_str::<serde_json::Value>(line) {
-        Ok(v) => {
-            v.get("session_id").and_then(|x| x.as_str()) == Some(id)
-                || v.get("sessionId").and_then(|x| x.as_str()) == Some(id)
-                || v.get("id").and_then(|x| x.as_str()) == Some(id)
-        }
-        Err(_) => false,
-    }
 }
 
 #[cfg(test)]

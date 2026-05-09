@@ -364,7 +364,7 @@ fn export_one(
     Ok(report)
 }
 
-/// 一次扫完 history.jsonl，按 session_id 归档，避免批量导出时的 O(N×H) 复扫。
+/// 一次扫完 history.jsonl，按可识别的会话 id 归档，避免批量导出时的 O(N×H) 复扫。
 fn build_history_index(codex: &Path) -> AppResult<HashMap<String, Vec<String>>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     let hist = paths::history_path(codex);
@@ -377,15 +377,7 @@ fn build_history_index(codex: &Path) -> AppResult<HashMap<String, Vec<String>>> 
         if line.trim().is_empty() {
             continue;
         }
-        let id = match serde_json::from_str::<Value>(&line) {
-            Ok(v) => v
-                .get("session_id")
-                .and_then(|x| x.as_str())
-                .or_else(|| v.get("id").and_then(|x| x.as_str()))
-                .map(String::from),
-            Err(_) => None,
-        };
-        if let Some(id) = id {
+        if let Some(id) = crate::history::line_session_id(&line) {
             out.entry(id).or_default().push(line);
         }
     }
@@ -428,18 +420,31 @@ fn export_claude_session_bundles(
     let sessions = crate::claude_sessions::scan_sessions(claude)?;
     let by_id: HashMap<String, crate::models::SessionSummary> =
         sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
+    let history_ids = ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    let history_index =
+        crate::history::collect_lines_for_ids(&paths::history_path(claude), &history_ids)?;
     let mut reports = Vec::with_capacity(ids.len());
     for id in ids {
         reports.push(
-            export_one_claude(claude, &batch_root, id, &machine, &group, &by_id).unwrap_or_else(
-                |e| ExportReport {
-                    session_id: id.clone(),
-                    ok: false,
-                    bundle_path: None,
-                    error: Some(e.to_string()),
-                    skipped_reason: None,
-                },
-            ),
+            export_one_claude(
+                claude,
+                &batch_root,
+                id,
+                &machine,
+                &group,
+                &by_id,
+                &history_index,
+            )
+            .unwrap_or_else(|e| ExportReport {
+                session_id: id.clone(),
+                ok: false,
+                bundle_path: None,
+                error: Some(e.to_string()),
+                skipped_reason: None,
+            }),
         );
     }
     Ok(reports)
@@ -452,6 +457,7 @@ fn export_one_claude(
     machine: &str,
     group: &str,
     sessions: &HashMap<String, crate::models::SessionSummary>,
+    history_index: &HashMap<String, Vec<String>>,
 ) -> AppResult<ExportReport> {
     let session = sessions
         .get(id)
@@ -477,6 +483,9 @@ fn export_one_claude(
         }
     }
 
+    let has_history =
+        write_history_from_index(history_index, id, &bundle_dir.join("history.jsonl"))?;
+
     let manifest = BundleManifest {
         version: BUNDLE_VERSION,
         provider: Some(PROVIDER_CLAUDE.to_string()),
@@ -495,7 +504,7 @@ fn export_one_claude(
         export_group: group.to_string(),
         sha256_rollout: sha,
         rollout_line_count: line_count,
-        has_history: false,
+        has_history,
     };
     fs::write(
         bundle_dir.join("manifest.json"),
@@ -728,6 +737,9 @@ fn import_one_claude(
             ImportMode::Skip => {
                 report.skipped_reason = Some("本地已存在，Skip 模式".into());
                 report.ok = true;
+                let hist_src = PathBuf::from(&item.bundle_dir).join("history.jsonl");
+                report.history_appended =
+                    append_history(claude, &hist_src, &item.manifest.session_id)?;
                 return Ok(report);
             }
             ImportMode::KeepLocal => {
@@ -737,6 +749,9 @@ fn import_one_claude(
                     if local >= bundle {
                         report.skipped_reason = Some("本地 mtime 更新，KeepLocal 模式".into());
                         report.ok = true;
+                        let hist_src = PathBuf::from(&item.bundle_dir).join("history.jsonl");
+                        report.history_appended =
+                            append_history(claude, &hist_src, &item.manifest.session_id)?;
                         return Ok(report);
                     }
                 }
@@ -765,6 +780,8 @@ fn import_one_claude(
             }
         }
     }
+    let hist_src = PathBuf::from(&item.bundle_dir).join("history.jsonl");
+    report.history_appended = append_history(claude, &hist_src, &item.manifest.session_id)?;
 
     report.ok = true;
     Ok(report)
@@ -820,6 +837,9 @@ fn import_one(
             ImportMode::Skip => {
                 report.skipped_reason = Some("本地已存在，Skip 模式".into());
                 report.ok = true;
+                let hist_src = PathBuf::from(&item.bundle_dir).join("history.jsonl");
+                report.history_appended =
+                    append_history(codex, &hist_src, &item.manifest.session_id)?;
                 return Ok(report);
             }
             ImportMode::KeepLocal => {
@@ -899,36 +919,7 @@ fn import_one(
 }
 
 fn append_history(codex: &Path, src: &Path, id: &str) -> AppResult<u32> {
-    let hist = paths::history_path(codex);
-    let mut existing: std::collections::HashSet<String> = Default::default();
-    if hist.is_file() {
-        for line in BufReader::new(File::open(&hist)?).lines() {
-            let line = line?;
-            if !line.trim().is_empty() {
-                existing.insert(line);
-            }
-        }
-    }
-    let mut out = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&hist)?;
-    let mut added = 0u32;
-    for line in BufReader::new(File::open(src)?).lines() {
-        let line = line?;
-        if line.trim().is_empty() || existing.contains(&line) {
-            continue;
-        }
-        if let Ok(v) = serde_json::from_str::<Value>(&line) {
-            if v.get("session_id").and_then(|x| x.as_str()) == Some(id)
-                || v.get("id").and_then(|x| x.as_str()) == Some(id)
-            {
-                writeln!(out, "{}", line)?;
-                added += 1;
-            }
-        }
-    }
-    Ok(added)
+    crate::history::append_from_file(&paths::history_path(codex), src, id)
 }
 
 fn upsert_threads_minimal(codex: &Path, m: &BundleManifest, dest_abs: &Path) -> AppResult<()> {
@@ -1052,6 +1043,14 @@ mod tests {
             dir.join(format!("{id}.jsonl")),
             format!("{}\n", serde_json::to_string(&line)?),
         )?;
+        fs::write(
+            claude.join("history.jsonl"),
+            format!(
+                "{{\"sessionId\":\"{id}\",\"display\":\"bundle one\"}}\n\
+                 {{\"session_id\":\"other-session\",\"display\":\"ignore\"}}\n\
+                 {{\"id\":\"{id}\",\"display\":\"bundle two\"}}\n"
+            ),
+        )?;
         Ok(())
     }
 
@@ -1074,6 +1073,11 @@ mod tests {
         )?;
         assert_eq!(reports.len(), 1);
         assert!(reports[0].ok);
+        let bundle_path = PathBuf::from(reports[0].bundle_path.as_deref().unwrap());
+        let exported_history = fs::read_to_string(bundle_path.join("history.jsonl"))?;
+        assert!(exported_history.contains("bundle one"));
+        assert!(exported_history.contains("bundle two"));
+        assert!(!exported_history.contains("ignore"));
 
         let verified = verify_bundles(
             bundle_dir.to_string_lossy().into_owned(),
@@ -1081,6 +1085,7 @@ mod tests {
         )?;
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].verified, Some(true));
+        assert!(verified[0].manifest.has_history);
 
         let imported = import_session_bundles(
             Some(PROVIDER_CLAUDE.to_string()),
@@ -1093,10 +1098,30 @@ mod tests {
         )?;
         assert_eq!(imported.len(), 1);
         assert!(imported[0].ok);
+        assert_eq!(imported[0].history_appended, 2);
         assert!(paths::claude_projects_dir(&import_claude)
             .join("sample-project")
             .join("claude-bundle-1.jsonl")
             .is_file());
+        let imported_history = fs::read_to_string(import_claude.join("history.jsonl"))?;
+        assert!(imported_history.contains("bundle one"));
+        assert!(imported_history.contains("bundle two"));
+        assert!(!imported_history.contains("ignore"));
+
+        fs::remove_file(import_claude.join("history.jsonl"))?;
+        let skipped = import_session_bundles(
+            Some(PROVIDER_CLAUDE.to_string()),
+            bundle_dir.to_string_lossy().into_owned(),
+            String::new(),
+            Some(import_claude.to_string_lossy().into_owned()),
+            ImportMode::Skip,
+            false,
+            true,
+        )?;
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].ok);
+        assert!(!skipped[0].rollout_written);
+        assert_eq!(skipped[0].history_appended, 2);
 
         fs::remove_dir_all(root).ok();
         Ok(())
