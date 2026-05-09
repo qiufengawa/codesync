@@ -29,6 +29,7 @@ const codexItems: NavItem[] = [
 
 const claudeItems: NavItem[] = [
   { to: "/claude/sessions", icon: MessageSquare, label: "会话" },
+  { to: "/claude/repair", icon: Wrench, label: "修复" },
   { to: "/claude/backups", icon: Archive, label: "备份" },
   { to: "/claude/transfer", icon: Package, label: "导出 / 导入" },
 ];

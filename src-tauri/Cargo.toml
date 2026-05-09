@@ -1,6 +1,6 @@
 [package]
 name = "cc-session-manager"
-version = "0.2.8"
+version = "0.2.9"
 description = "CC Sessions"
 authors = ["zjsmew"]
 edition = "2021"

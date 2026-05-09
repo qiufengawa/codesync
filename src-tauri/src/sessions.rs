@@ -339,33 +339,32 @@ fn delete_one_claude(claude_dir: &Path, id: &str) -> AppResult<DeleteResult> {
     let mut jsonl_path: Option<PathBuf> = None;
     find_jsonl_by_name(&projects, &target_filename, &mut jsonl_path);
 
-    let Some(jsonl) = jsonl_path else {
-        result.rollout_missing = true;
-        return Ok(result);
-    };
-
-    match fs::remove_file(&jsonl) {
-        Ok(_) => result.rollout_deleted = true,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            result.rollout_missing = true;
-        }
-        Err(e) => {
-            append_error(&mut result, format!("rollout remove failed: {}", e));
-            return Ok(result);
-        }
-    }
-
-    if let Some(stem) = jsonl.file_stem() {
-        let sidecar = jsonl.with_file_name(stem);
-        if sidecar.is_dir() {
-            if let Err(e) = fs::remove_dir_all(&sidecar) {
-                append_error(&mut result, format!("sidecar remove failed: {}", e));
+    if let Some(jsonl) = jsonl_path {
+        match fs::remove_file(&jsonl) {
+            Ok(_) => result.rollout_deleted = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                result.rollout_missing = true;
+            }
+            Err(e) => {
+                append_error(&mut result, format!("rollout remove failed: {}", e));
+                return Ok(result);
             }
         }
-    }
 
-    if let Some(parent) = jsonl.parent() {
-        let _ = fs::remove_dir(parent);
+        if let Some(stem) = jsonl.file_stem() {
+            let sidecar = jsonl.with_file_name(stem);
+            if sidecar.is_dir() {
+                if let Err(e) = fs::remove_dir_all(&sidecar) {
+                    append_error(&mut result, format!("sidecar remove failed: {}", e));
+                }
+            }
+        }
+
+        if let Some(parent) = jsonl.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    } else {
+        result.rollout_missing = true;
     }
 
     let history_path = paths::history_path(claude_dir);
@@ -376,7 +375,7 @@ fn delete_one_claude(claude_dir: &Path, id: &str) -> AppResult<DeleteResult> {
         }
     }
 
-    result.ok = result.rollout_deleted || result.rollout_missing;
+    result.ok = result.rollout_deleted || result.history_rows_deleted > 0;
     Ok(result)
 }
 
@@ -554,6 +553,7 @@ fn history_line_matches_session(line: &str, id: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(line) {
         Ok(v) => {
             v.get("session_id").and_then(|x| x.as_str()) == Some(id)
+                || v.get("sessionId").and_then(|x| x.as_str()) == Some(id)
                 || v.get("id").and_then(|x| x.as_str()) == Some(id)
         }
         Err(_) => false,
@@ -588,6 +588,7 @@ mod tests {
             format!(
                 "{{\"session_id\":\"{target_id}\",\"message\":\"first\"}}\n\
                  {{\"id\":\"{target_id}\",\"message\":\"second\"}}\n\
+                 {{\"sessionId\":\"{target_id}\",\"message\":\"third\"}}\n\
                  not-json\n\
                  {{\"session_id\":\"{other_id}\",\"message\":\"keep\"}}\n"
             ),
@@ -598,13 +599,44 @@ mod tests {
 
         assert!(result.ok);
         assert!(result.rollout_deleted);
-        assert_eq!(result.history_rows_deleted, 2);
+        assert_eq!(result.history_rows_deleted, 3);
         assert!(!project.join(format!("{target_id}.jsonl")).exists());
 
         let history = fs::read_to_string(claude.join("history.jsonl")).expect("read history");
         assert!(!history.contains(target_id));
         assert!(history.contains(other_id));
         assert!(history.contains("not-json"));
+
+        fs::remove_dir_all(claude).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn delete_claude_session_prunes_history_even_when_jsonl_is_missing() {
+        let claude = temp_dir("claude-delete-missing-jsonl-history");
+        let project = claude.join("projects").join("-tmp-project");
+        fs::create_dir_all(&project).expect("create project dir");
+
+        let target_id = "claude-target-session";
+        let other_id = "claude-other-session";
+        fs::write(
+            claude.join("history.jsonl"),
+            format!(
+                "{{\"sessionId\":\"{target_id}\",\"message\":\"delete\"}}\n\
+                 {{\"sessionId\":\"{other_id}\",\"message\":\"keep\"}}\n"
+            ),
+        )
+        .expect("write history");
+
+        let result = delete_one_claude(&claude, target_id).expect("delete claude session");
+
+        assert!(result.ok);
+        assert!(result.rollout_missing);
+        assert!(!result.rollout_deleted);
+        assert_eq!(result.history_rows_deleted, 1);
+
+        let history = fs::read_to_string(claude.join("history.jsonl")).expect("read history");
+        assert!(!history.contains(target_id));
+        assert!(history.contains(other_id));
 
         fs::remove_dir_all(claude).expect("cleanup temp dir");
     }

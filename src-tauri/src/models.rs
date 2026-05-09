@@ -498,6 +498,28 @@ pub struct OrphanPruneReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct HistoryOrphanReport {
+    pub provider: String,
+    pub history_path: String,
+    pub session_count: u32,
+    pub history_rows: u32,
+    pub linked_rows: u32,
+    pub orphan_rows: u32,
+    /// JSON 无效或没有可识别会话 id 的行不会被自动清理。
+    pub untracked_rows: u32,
+    pub orphan_session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryPruneReport {
+    pub provider: String,
+    pub history_path: String,
+    pub removed_rows: u32,
+    pub dry_run: bool,
+    pub orphan_session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct FamilyOverlay {
     pub session_id: String,
     /// threads 表中记录的 model_provider

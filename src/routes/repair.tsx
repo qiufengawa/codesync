@@ -61,11 +61,17 @@ import {
   api,
   type DiagnosticReport,
   type FamilyIntegrityReport,
+  type HistoryOrphanReport,
   type ProviderInfo,
+  type SessionProvider,
   type SwitchStrategy,
 } from "@/lib/api";
 
-export default function RepairRoute() {
+export default function RepairRoute({ provider = "codex" }: { provider?: SessionProvider }) {
+  return provider === "claude" ? <ClaudeRepairRoute /> : <CodexRepairRoute />;
+}
+
+function CodexRepairRoute() {
   const settings = useSettings((s) => s.settings);
   const codexDir = settings?.codex_dir ?? "";
 
@@ -687,6 +693,180 @@ export default function RepairRoute() {
                       ? `已从 session_index 删除 ${r.index_removed} 行`
                       : `已从 threads 表删除 ${r.threads_removed} 行`,
                   );
+                  await refresh();
+                });
+              }}
+            >
+              确认清理
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+function ClaudeRepairRoute() {
+  const settings = useSettings((s) => s.settings);
+  const claudeDir = settings?.claude_dir ?? "";
+  const [report, setReport] = useState<HistoryOrphanReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState<string | null>(null);
+  const [dryRun, setDryRun] = useState(false);
+  const [confirmPrune, setConfirmPrune] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!claudeDir) return;
+    setLoading(true);
+    try {
+      setReport(await api.diagnoseClaudeHistoryOrphans(claudeDir));
+    } catch (e) {
+      toast.error(`Claude history 诊断失败：${String((e as Error)?.message ?? e)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [claudeDir]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    setRunning(key);
+    try {
+      await fn();
+    } catch (e) {
+      toast.error(String((e as Error)?.message ?? e));
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  return (
+    <>
+      <TopBar title="Claude 修复" onRefresh={refresh} showListTools={false} />
+      <ScrollArea className="flex-1">
+        <div className="min-w-0 max-w-full space-y-4 p-4 sm:p-6">
+          {!claudeDir ? (
+            <EmptyState
+              icon={<Wrench className="h-10 w-10" />}
+              title="尚未配置 Claude 目录"
+              description="请先在设置里填写 ~/.claude 路径"
+            />
+          ) : (
+            <Card className="min-w-0 overflow-hidden">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
+                  <Wrench className="h-4 w-4" />
+                  history.jsonl 残留
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-sm text-xs">
+                      将 Claude 的 <code>history.jsonl</code> 与 <code>projects</code>{" "}
+                      下仍存在的会话文件比对，只清理能明确匹配到已删除会话 ID 的历史行。
+                    </TooltipContent>
+                  </Tooltip>
+                  {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="min-w-0 space-y-3">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <Stat label="现存会话文件" value={report?.session_count ?? "-"} />
+                  <Stat label="history 行数" value={report?.history_rows ?? "-"} />
+                  <Stat
+                    label="残留历史行"
+                    value={report?.orphan_rows ?? "-"}
+                    warn={(report?.orphan_rows ?? 0) > 0}
+                  />
+                  <Stat
+                    label="未识别行"
+                    value={report?.untracked_rows ?? "-"}
+                    hint="JSON 无效或没有 sessionId/session_id/id 的行不会自动删除"
+                  />
+                </div>
+                <div className="min-w-0 rounded-md bg-muted/30 p-3 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  文件路径：<code>{report?.history_path ?? `${claudeDir}\\history.jsonl`}</code>
+                </div>
+                <Separator />
+                <DiffRow
+                  label="history.jsonl 残留：对应 Claude 会话文件已删除"
+                  ids={report?.orphan_session_ids ?? []}
+                  color="muted"
+                  recommendation="确认不需要恢复这些会话后，可以使用下方按钮清理对应历史行"
+                />
+                {(report?.orphan_session_ids.length ?? 0) === 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    暂未发现 Claude history 残留。
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1">
+                    <Switch
+                      id="claude-history-dry-run"
+                      checked={dryRun}
+                      onCheckedChange={setDryRun}
+                    />
+                    <Label htmlFor="claude-history-dry-run" className="text-xs">
+                      效果预览
+                    </Label>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={dryRun ? "outline" : "destructive"}
+                    onClick={() => {
+                      if (dryRun) {
+                        void run("claude_history_prune_preview", async () => {
+                          const result = await api.pruneClaudeHistoryOrphans(claudeDir, true);
+                          toast.success(
+                            `预览：将从 Claude history 删除 ${result.removed_rows} 行`,
+                          );
+                        });
+                      } else {
+                        setConfirmPrune(true);
+                      }
+                    }}
+                    disabled={!!running || (report?.orphan_rows ?? 0) === 0}
+                    className="gap-1.5"
+                  >
+                    <Eraser className="h-3.5 w-3.5" />
+                    清理 Claude history 残留
+                    {(report?.orphan_rows ?? 0) > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="ml-0.5 h-4 border-current/30 bg-background/20 px-1 text-[10px] font-normal"
+                      >
+                        {report?.orphan_rows}
+                      </Badge>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </ScrollArea>
+
+      <AlertDialog open={confirmPrune} onOpenChange={setConfirmPrune}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>清理 Claude history 残留</AlertDialogTitle>
+            <AlertDialogDescription>
+              即将从 <code>{report?.history_path ?? "history.jsonl"}</code> 删除{" "}
+              <b>{report?.orphan_rows ?? 0}</b> 行。这些行引用的 Claude 会话文件已经不存在，
+              删除后不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setConfirmPrune(false);
+                void run("claude_history_prune", async () => {
+                  const result = await api.pruneClaudeHistoryOrphans(claudeDir, false);
+                  toast.success(`已从 Claude history 删除 ${result.removed_rows} 行`);
                   await refresh();
                 });
               }}

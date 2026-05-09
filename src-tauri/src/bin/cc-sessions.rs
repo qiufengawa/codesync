@@ -155,7 +155,7 @@ fn print_help() {
   stats <kpi|projects|models|timeseries|heatmap>
   backup <create|list|open|verify|delete|restore|restore-all>
   bundle <export|export-all|list|verify|import|pack|unpack>
-  repair <provider-info|diagnose|index|threads|prune|clone|batch-clone|fork>
+  repair <provider-info|diagnose|index|threads|prune|claude-history|clone|batch-clone|fork>
   family <store|verify|overlay|rollback|delete-branch|sync-states|sync-into-active|sync-active-into>
   settings <defaults|read|validate>
   menu
@@ -711,6 +711,36 @@ fn cmd_repair(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                     report.index_removed, report.threads_removed, report.dry_run
                 );
             })
+        }
+        "claude-history" => {
+            let prune = take_flag(&mut args, "--prune");
+            let dry_run = take_flag(&mut args, "--dry-run");
+            ensure_no_args(&args)?;
+            if prune {
+                let report = repair::prune_claude_history_orphans(ctx.claude_dir.clone(), dry_run)?;
+                output(ctx, &report, |report| {
+                    println!(
+                        "removed_rows={}\tdry_run={}\thistory_path={}",
+                        report.removed_rows, report.dry_run, report.history_path
+                    );
+                    for id in &report.orphan_session_ids {
+                        println!("orphan_session_id\t{id}");
+                    }
+                })
+            } else {
+                let report = repair::diagnose_claude_history_orphans(ctx.claude_dir.clone())?;
+                output(ctx, &report, |report| {
+                    println!("history_path\t{}", report.history_path);
+                    println!("session_count\t{}", report.session_count);
+                    println!("history_rows\t{}", report.history_rows);
+                    println!("linked_rows\t{}", report.linked_rows);
+                    println!("orphan_rows\t{}", report.orphan_rows);
+                    println!("untracked_rows\t{}", report.untracked_rows);
+                    for id in &report.orphan_session_ids {
+                        println!("orphan_session_id\t{id}");
+                    }
+                })
+            }
         }
         "clone" => {
             let id = required(take_value(&mut args, "--id")?, "clone 需要 --id")?;

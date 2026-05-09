@@ -202,6 +202,25 @@ export type OrphanPruneReport = {
   dry_run: boolean;
 };
 
+export type HistoryOrphanReport = {
+  provider: SessionProvider;
+  history_path: string;
+  session_count: number;
+  history_rows: number;
+  linked_rows: number;
+  orphan_rows: number;
+  untracked_rows: number;
+  orphan_session_ids: string[];
+};
+
+export type HistoryPruneReport = {
+  provider: SessionProvider;
+  history_path: string;
+  removed_rows: number;
+  dry_run: boolean;
+  orphan_session_ids: string[];
+};
+
 export type DiagnosticReport = {
   rollout_count: number;
   archived_rollout_count: number;
@@ -608,6 +627,10 @@ export const api = {
       pruneThreads: p.prune_threads,
       dryRun: p.dry_run,
     }),
+  diagnoseClaudeHistoryOrphans: (claudeDir: string) =>
+    invoke<HistoryOrphanReport>("diagnose_claude_history_orphans", { claudeDir }),
+  pruneClaudeHistoryOrphans: (claudeDir: string, dryRun: boolean) =>
+    invoke<HistoryPruneReport>("prune_claude_history_orphans", { claudeDir, dryRun }),
   cloneSessionForProvider: (p: {
     codex_dir: string;
     session_id: string;

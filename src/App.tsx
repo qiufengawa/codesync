@@ -32,11 +32,12 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/codex/sessions" replace />} />
             <Route path="/codex/sessions" element={<SessionsRoute provider="codex" />} />
-            <Route path="/codex/repair" element={<RepairRoute />} />
+            <Route path="/codex/repair" element={<RepairRoute provider="codex" />} />
             <Route path="/codex/backups" element={<BackupsRoute provider="codex" />} />
             <Route path="/codex/backups/:name" element={<BackupDetailRoute provider="codex" />} />
             <Route path="/codex/transfer" element={<TransferRoute provider="codex" />} />
             <Route path="/claude/sessions" element={<SessionsRoute provider="claude" />} />
+            <Route path="/claude/repair" element={<RepairRoute provider="claude" />} />
             <Route path="/claude/backups" element={<BackupsRoute provider="claude" />} />
             <Route path="/claude/backups/:name" element={<BackupDetailRoute provider="claude" />} />
             <Route path="/claude/transfer" element={<TransferRoute provider="claude" />} />

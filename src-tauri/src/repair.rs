@@ -17,8 +17,8 @@ use crate::error::{AppError, AppResult};
 use crate::family;
 use crate::models::{
     BranchStatus, BranchSyncReport, BranchSyncState, CloneReport, DiagnosticReport, Family,
-    FamilyBranch, ForkSessionReport, IndexRepairReport, OrphanPruneReport, ProviderInfo,
-    SwitchStrategy, SyncBranchReport, ThreadsRebuildReport,
+    FamilyBranch, ForkSessionReport, HistoryOrphanReport, HistoryPruneReport, IndexRepairReport,
+    OrphanPruneReport, ProviderInfo, SwitchStrategy, SyncBranchReport, ThreadsRebuildReport,
 };
 
 /// Codex CLI 的内建默认 provider（与官方文档一致）。
@@ -587,6 +587,118 @@ pub fn prune_orphan_entries(
         threads_removed,
         dry_run,
     })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn diagnose_claude_history_orphans(claude_dir: String) -> AppResult<HistoryOrphanReport> {
+    let (history_path, session_ids) = claude_history_context(claude_dir)?;
+
+    let mut history_rows = 0u32;
+    let mut linked_rows = 0u32;
+    let mut orphan_rows = 0u32;
+    let mut untracked_rows = 0u32;
+    let mut orphan_ids = BTreeSet::new();
+
+    if history_path.is_file() {
+        let file = fs::File::open(&history_path)?;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            history_rows += 1;
+            match history_line_session_id(&line) {
+                Some(id) if session_ids.contains(&id) => linked_rows += 1,
+                Some(id) => {
+                    orphan_rows += 1;
+                    orphan_ids.insert(id);
+                }
+                None => untracked_rows += 1,
+            }
+        }
+    }
+
+    Ok(HistoryOrphanReport {
+        provider: "claude".to_string(),
+        history_path: history_path.to_string_lossy().into_owned(),
+        session_count: session_ids.len() as u32,
+        history_rows,
+        linked_rows,
+        orphan_rows,
+        untracked_rows,
+        orphan_session_ids: orphan_ids.into_iter().collect(),
+    })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn prune_claude_history_orphans(
+    claude_dir: String,
+    dry_run: bool,
+) -> AppResult<HistoryPruneReport> {
+    let (history_path, session_ids) = claude_history_context(claude_dir)?;
+
+    let mut removed_rows = 0u32;
+    let mut orphan_ids = BTreeSet::new();
+    let mut kept_lines = Vec::new();
+
+    if history_path.is_file() {
+        let file = fs::File::open(&history_path)?;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if let Some(id) = history_line_session_id(&line) {
+                if !session_ids.contains(&id) {
+                    removed_rows += 1;
+                    orphan_ids.insert(id);
+                    continue;
+                }
+            }
+            kept_lines.push(line);
+        }
+
+        if !dry_run && removed_rows > 0 {
+            let tmp = history_path.with_extension("jsonl.tmp");
+            {
+                let mut file = fs::File::create(&tmp)?;
+                for line in &kept_lines {
+                    writeln!(file, "{}", line)?;
+                }
+                file.sync_all().ok();
+            }
+            fs::rename(&tmp, &history_path)?;
+        }
+    }
+
+    Ok(HistoryPruneReport {
+        provider: "claude".to_string(),
+        history_path: history_path.to_string_lossy().into_owned(),
+        removed_rows,
+        dry_run,
+        orphan_session_ids: orphan_ids.into_iter().collect(),
+    })
+}
+
+fn claude_history_context(claude_dir: String) -> AppResult<(PathBuf, BTreeSet<String>)> {
+    let claude = PathBuf::from(claude_dir);
+    let session_ids = crate::claude_sessions::scan_sessions(&claude)?
+        .into_iter()
+        .map(|session| session.id)
+        .collect::<BTreeSet<_>>();
+    Ok((paths::history_path(&claude), session_ids))
+}
+
+fn history_line_session_id(line: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    for key in ["sessionId", "session_id", "id"] {
+        if let Some(id) = value
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
 fn salvage_id_from_filename(p: &Path) -> Option<String> {
@@ -2711,6 +2823,23 @@ mod tests {
         write_rollout_in(codex, "sessions", id, provider)
     }
 
+    fn write_claude_session(claude: &Path, id: &str) -> AppResult<()> {
+        let dir = claude.join("projects").join("sample-project");
+        fs::create_dir_all(&dir)?;
+        let line = serde_json::json!({
+            "sessionId": id,
+            "cwd": "F:\\project\\example",
+            "timestamp": "2026-04-22T00:00:00Z",
+            "type": "user",
+            "message": {"role": "user", "content": "hello"}
+        });
+        fs::write(
+            dir.join(format!("{id}.jsonl")),
+            format!("{}\n", serde_json::to_string(&line)?),
+        )?;
+        Ok(())
+    }
+
     fn create_minimal_state(codex: &Path) -> AppResult<rusqlite::Connection> {
         fs::create_dir_all(codex)?;
         let conn = rusqlite::Connection::open(codex.join("state_5.sqlite"))?;
@@ -3022,6 +3151,58 @@ mod tests {
 
         assert!(diag.orphan_in_threads.is_empty());
         assert_eq!(prune.threads_removed, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_history_orphans_are_reported_and_pruned() -> AppResult<()> {
+        let claude = temp_codex_dir("cc-session-manager-claude-history-test");
+        write_claude_session(&claude, "live-session")?;
+        fs::write(
+            claude.join("history.jsonl"),
+            "{\
+                \"sessionId\":\"live-session\",\
+                \"display\":\"keep\"\
+             }\n\
+             {\
+                \"sessionId\":\"deleted-session\",\
+                \"display\":\"remove\"\
+             }\n\
+             {\
+                \"session_id\":\"deleted-session-2\",\
+                \"display\":\"remove too\"\
+             }\n\
+             not-json\n\
+             {\"display\":\"no session id\"}\n",
+        )?;
+
+        let report = diagnose_claude_history_orphans(claude.to_string_lossy().into_owned())?;
+        assert_eq!(report.session_count, 1);
+        assert_eq!(report.history_rows, 5);
+        assert_eq!(report.linked_rows, 1);
+        assert_eq!(report.orphan_rows, 2);
+        assert_eq!(report.untracked_rows, 2);
+        assert_eq!(
+            report.orphan_session_ids,
+            vec![
+                "deleted-session".to_string(),
+                "deleted-session-2".to_string()
+            ]
+        );
+
+        let preview = prune_claude_history_orphans(claude.to_string_lossy().into_owned(), true)?;
+        assert_eq!(preview.removed_rows, 2);
+        assert!(fs::read_to_string(claude.join("history.jsonl"))?.contains("deleted-session"));
+
+        let result = prune_claude_history_orphans(claude.to_string_lossy().into_owned(), false)?;
+        assert_eq!(result.removed_rows, 2);
+        let history = fs::read_to_string(claude.join("history.jsonl"))?;
+        assert!(history.contains("live-session"));
+        assert!(!history.contains("deleted-session"));
+        assert!(history.contains("not-json"));
+        assert!(history.contains("no session id"));
+
+        fs::remove_dir_all(&claude).ok();
         Ok(())
     }
 }
