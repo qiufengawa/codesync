@@ -195,6 +195,7 @@ xattr -d com.apple.quarantine cc-session-manager
 ## 特别感谢
 
 [linux.do](https://linux.do) —— 真诚、友善、团结、专业，共建你我引以为荣之社区。
+[codex-session-cloner](https://github.com/goodnightzsj/codex-session-cloner) —— 参考了修复和会话导出导入的代码
 
 ## License
 
