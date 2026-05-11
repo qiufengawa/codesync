@@ -1,10 +1,12 @@
 import { useEffect } from "react";
+import { shouldIgnoreGlobalHotkey } from "@/lib/keyboard";
 
 type Handler = (e: KeyboardEvent) => void;
 
 export function useHotkeys(bindings: Array<{ combo: string; handler: Handler }>) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (shouldIgnoreGlobalHotkey(e)) return;
       for (const b of bindings) {
         if (matches(e, b.combo)) {
           b.handler(e);
