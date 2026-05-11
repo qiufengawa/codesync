@@ -1,6 +1,6 @@
 # CC Sessions
 
-![Version](https://img.shields.io/badge/version-0.2.6-blue)
+![Version](https://img.shields.io/github/v/release/ccpopy/cc-sessions?label=version&sort=semver)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-ff9900)
