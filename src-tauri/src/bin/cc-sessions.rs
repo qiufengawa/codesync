@@ -590,6 +590,7 @@ fn cmd_bundle(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 mode,
                 make_visible,
                 strict,
+                Vec::new(),
             )?;
             output(ctx, &reports, |reports| {
                 for report in reports {

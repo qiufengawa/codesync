@@ -16,7 +16,7 @@
 //!           manifest.json                     # 元数据 + sha256
 //! ```
 //!
-//! zip 打包：直接压整个 bundle 根目录（跨机器：解压后 import_bundles 即可）。
+//! zip 打包：压缩传入的单会话 bundle 目录或批次目录（跨机器：解压后 import_bundles 即可）。
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -30,7 +30,8 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 use crate::family;
 use crate::models::{
-    BundleListItem, BundleManifest, ExportReport, ImportMode, ImportReport, ZipReport,
+    BundleListItem, BundleManifest, ExportReport, ImportMode, ImportReport, ProjectPathMapping,
+    ZipReport,
 };
 use crate::paths;
 use crate::state_db;
@@ -645,11 +646,13 @@ pub fn import_session_bundles(
     mode: ImportMode,
     make_visible: bool,
     strict: bool,
+    project_mappings: Vec<ProjectPathMapping>,
 ) -> AppResult<Vec<ImportReport>> {
     let codex = PathBuf::from(&codex_dir);
     let claude = PathBuf::from(
         claude_dir.unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned()),
     );
+    let project_mappings = build_project_mapping(project_mappings)?;
     let items = list_bundles(src_dir, provider.clone())?;
     let mut reports: Vec<ImportReport> = Vec::with_capacity(items.len());
     for it in items {
@@ -658,9 +661,9 @@ pub fn import_session_bundles(
             .unwrap_or_else(|| bundle_provider(&it.manifest));
         reports.push(
             (if item_provider == PROVIDER_CLAUDE {
-                import_one_claude(&claude, &it, &mode, strict)
+                import_one_claude(&claude, &it, &mode, strict, &project_mappings)
             } else {
-                import_one(&codex, &it, &mode, make_visible, strict)
+                import_one(&codex, &it, &mode, make_visible, strict, &project_mappings)
             })
             .unwrap_or_else(|e| ImportReport {
                 session_id: it.manifest.session_id.clone(),
@@ -679,6 +682,43 @@ pub fn import_session_bundles(
     Ok(reports)
 }
 
+fn build_project_mapping(items: Vec<ProjectPathMapping>) -> AppResult<HashMap<String, String>> {
+    let mut out = HashMap::new();
+    for item in items {
+        let source = item.source_cwd.trim();
+        let target = item.target_cwd.trim();
+        if source.is_empty() {
+            return Err(AppError::Path("项目路径映射的 source_cwd 不能为空".into()));
+        }
+        if target.is_empty() {
+            return Err(AppError::Path(format!(
+                "项目路径映射的 target_cwd 不能为空: {source}"
+            )));
+        }
+        if let Some(existing) = out.get(source) {
+            if existing != target {
+                return Err(AppError::Path(format!(
+                    "同一个源项目存在多个目标路径: {source}"
+                )));
+            }
+        }
+        out.insert(source.to_string(), target.to_string());
+    }
+    Ok(out)
+}
+
+fn mapped_project_cwd<'a>(
+    manifest: &'a BundleManifest,
+    mappings: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    let source = manifest.session_cwd.trim();
+    if source.is_empty() {
+        None
+    } else {
+        mappings.get(source).map(String::as_str)
+    }
+}
+
 fn bundle_provider(manifest: &BundleManifest) -> &str {
     manifest.provider.as_deref().unwrap_or(PROVIDER_CODEX)
 }
@@ -688,6 +728,7 @@ fn import_one_claude(
     item: &BundleListItem,
     mode: &ImportMode,
     strict: bool,
+    project_mappings: &HashMap<String, String>,
 ) -> AppResult<ImportReport> {
     let mut report = ImportReport {
         session_id: item.manifest.session_id.clone(),
@@ -730,8 +771,8 @@ fn import_one_claude(
         .source_relpath
         .as_deref()
         .unwrap_or(&item.manifest.rollout_relpath);
-    let dest_abs =
-        paths::claude_projects_dir(claude).join(paths::checked_relative_path(source_rel)?);
+    let mapped_cwd = mapped_project_cwd(&item.manifest, project_mappings);
+    let dest_abs = claude_import_dest(claude, source_rel, mapped_cwd, &item.manifest.session_id)?;
     if dest_abs.is_file() {
         match mode {
             ImportMode::Skip => {
@@ -763,7 +804,7 @@ fn import_one_claude(
     if let Some(parent) = dest_abs.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(&src_file, &dest_abs)?;
+    copy_claude_jsonl_with_cwd(&src_file, &dest_abs, mapped_cwd)?;
     report.rollout_written = true;
 
     if let Some(sidecar_rel) = item.manifest.sidecar_relpath.as_deref() {
@@ -787,12 +828,64 @@ fn import_one_claude(
     Ok(report)
 }
 
+fn claude_import_dest(
+    claude: &Path,
+    source_rel: &str,
+    mapped_cwd: Option<&str>,
+    session_id: &str,
+) -> AppResult<PathBuf> {
+    let rel = paths::checked_relative_path(source_rel)?;
+    let Some(mapped_cwd) = mapped_cwd else {
+        return Ok(paths::claude_projects_dir(claude).join(rel));
+    };
+    let file_name = rel
+        .file_name()
+        .map(|name| name.to_owned())
+        .unwrap_or_else(|| std::ffi::OsString::from(format!("{session_id}.jsonl")));
+    let project_dir = find_claude_project_dir_for_cwd(claude, mapped_cwd)?.unwrap_or_else(|| {
+        paths::claude_projects_dir(claude).join(paths::sanitize_slug(mapped_cwd))
+    });
+    Ok(project_dir.join(file_name))
+}
+
+fn find_claude_project_dir_for_cwd(claude: &Path, target_cwd: &str) -> AppResult<Option<PathBuf>> {
+    let projects = paths::claude_projects_dir(claude);
+    if !projects.is_dir() {
+        return Ok(None);
+    }
+    for entry in walkdir::WalkDir::new(&projects)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let file = File::open(entry.path())?;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(&line)?;
+            if value.get("cwd").and_then(Value::as_str) == Some(target_cwd) {
+                return Ok(entry.path().parent().map(Path::to_path_buf));
+            }
+            break;
+        }
+    }
+    Ok(None)
+}
+
 fn import_one(
     codex: &Path,
     item: &BundleListItem,
     mode: &ImportMode,
     make_visible: bool,
     strict: bool,
+    project_mappings: &HashMap<String, String>,
 ) -> AppResult<ImportReport> {
     let mut report = ImportReport {
         session_id: item.manifest.session_id.clone(),
@@ -832,6 +925,7 @@ fn import_one(
 
     // 3) 目标路径决策
     let dest_abs = codex.join(&rel);
+    let mapped_cwd = mapped_project_cwd(&item.manifest, project_mappings);
     if dest_abs.is_file() {
         match mode {
             ImportMode::Skip => {
@@ -867,7 +961,7 @@ fn import_one(
     if let Some(parent) = dest_abs.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(&src_file, &dest_abs)?;
+    copy_codex_rollout_with_cwd(&src_file, &dest_abs, mapped_cwd)?;
     report.rollout_written = true;
 
     // 5) 追加 history
@@ -879,7 +973,8 @@ fn import_one(
     // 6) 若需 make_visible，则 upsert threads + 追加 session_index
     if make_visible {
         if paths::state_db_path(codex).is_file() {
-            if let Err(e) = upsert_threads_minimal(codex, &item.manifest, &dest_abs) {
+            let import_cwd = mapped_cwd.unwrap_or(item.manifest.session_cwd.as_str());
+            if let Err(e) = upsert_threads_minimal(codex, &item.manifest, &dest_abs, import_cwd) {
                 report.error = Some(format!("threads upsert 失败: {}", e));
             } else {
                 report.threads_upserted = true;
@@ -888,8 +983,7 @@ fn import_one(
         let line = serde_json::json!({
             "id": item.manifest.session_id,
             "thread_name": item.manifest.thread_name,
-            "rollout_path": dest_abs.to_string_lossy(),
-            "updated_at": item.manifest.updated_at,
+            "updated_at": unix_seconds_to_rfc3339(item.manifest.updated_at)?,
         });
         let idx = paths::session_index_path(codex);
         let mut exist = false;
@@ -922,8 +1016,117 @@ fn append_history(codex: &Path, src: &Path, id: &str) -> AppResult<u32> {
     crate::history::append_from_file(&paths::history_path(codex), src, id)
 }
 
-fn upsert_threads_minimal(codex: &Path, m: &BundleManifest, dest_abs: &Path) -> AppResult<()> {
+fn copy_codex_rollout_with_cwd(src: &Path, dest: &Path, target_cwd: Option<&str>) -> AppResult<()> {
+    let Some(target_cwd) = target_cwd else {
+        fs::copy(src, dest)?;
+        return Ok(());
+    };
+
+    let tmp = dest.with_extension("jsonl.tmp");
+    let mut reader = BufReader::new(File::open(src)?);
+    let mut writer = BufWriter::new(File::create(&tmp)?);
+    let mut line = String::new();
+    let mut rewrote_meta = false;
+    loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if !rewrote_meta && !trimmed.trim().is_empty() {
+            let mut value: Value = serde_json::from_str(trimmed).map_err(|e| {
+                AppError::Other(format!(
+                    "无法重写 Codex 项目路径，rollout 首个事件不是有效 JSON: {}: {}",
+                    src.to_string_lossy(),
+                    e
+                ))
+            })?;
+            if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+                return Err(AppError::Other(format!(
+                    "无法重写 Codex 项目路径，rollout 首个事件不是 session_meta: {}",
+                    src.to_string_lossy()
+                )));
+            }
+            let payload = value
+                .get_mut("payload")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| {
+                    AppError::Other(format!(
+                        "无法重写 Codex 项目路径，session_meta.payload 不是对象: {}",
+                        src.to_string_lossy()
+                    ))
+                })?;
+            payload.insert("cwd".into(), Value::String(target_cwd.to_string()));
+            writeln!(writer, "{}", serde_json::to_string(&value)?)?;
+            rewrote_meta = true;
+        } else {
+            writer.write_all(line.as_bytes())?;
+        }
+    }
+    if !rewrote_meta {
+        return Err(AppError::Other(format!(
+            "无法重写 Codex 项目路径，rollout 没有有效 session_meta: {}",
+            src.to_string_lossy()
+        )));
+    }
+    writer.flush()?;
+    if dest.exists() {
+        fs::remove_file(dest)?;
+    }
+    fs::rename(tmp, dest)?;
+    Ok(())
+}
+
+fn copy_claude_jsonl_with_cwd(src: &Path, dest: &Path, target_cwd: Option<&str>) -> AppResult<()> {
+    let Some(target_cwd) = target_cwd else {
+        fs::copy(src, dest)?;
+        return Ok(());
+    };
+
+    let tmp = dest.with_extension("jsonl.tmp");
+    let reader = BufReader::new(File::open(src)?);
+    let mut writer = BufWriter::new(File::create(&tmp)?);
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            writeln!(writer)?;
+            continue;
+        }
+        let mut value: Value = serde_json::from_str(&line).map_err(|e| {
+            AppError::Other(format!(
+                "无法重写 Claude 项目路径，第 {} 行不是有效 JSON: {}: {}",
+                line_no + 1,
+                src.to_string_lossy(),
+                e
+            ))
+        })?;
+        let obj = value.as_object_mut().ok_or_else(|| {
+            AppError::Other(format!(
+                "无法重写 Claude 项目路径，第 {} 行不是 JSON 对象: {}",
+                line_no + 1,
+                src.to_string_lossy()
+            ))
+        })?;
+        obj.insert("cwd".into(), Value::String(target_cwd.to_string()));
+        writeln!(writer, "{}", serde_json::to_string(&value)?)?;
+    }
+    writer.flush()?;
+    if dest.exists() {
+        fs::remove_file(dest)?;
+    }
+    fs::rename(tmp, dest)?;
+    Ok(())
+}
+
+fn upsert_threads_minimal(
+    codex: &Path,
+    m: &BundleManifest,
+    dest_abs: &Path,
+    import_cwd: &str,
+) -> AppResult<()> {
     let conn = state_db::open(codex)?;
+    let updated_at = m.updated_at;
     let source = m
         .session_source
         .as_deref()
@@ -947,11 +1150,11 @@ fn upsert_threads_minimal(codex: &Path, m: &BundleManifest, dest_abs: &Path) -> 
         params![
             m.session_id,
             dest_abs.to_string_lossy(),
-            m.updated_at / 1000,
-            m.updated_at / 1000,
+            updated_at,
+            updated_at,
             source,
             m.model_provider.clone().unwrap_or_else(|| "openai".into()),
-            m.session_cwd,
+            import_cwd,
             m.thread_name,
             DEFAULT_SANDBOX_POLICY,
             DEFAULT_APPROVAL_MODE,
@@ -960,6 +1163,12 @@ fn upsert_threads_minimal(codex: &Path, m: &BundleManifest, dest_abs: &Path) -> 
         ],
     )?;
     Ok(())
+}
+
+fn unix_seconds_to_rfc3339(ts: i64) -> AppResult<String> {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .map(|dt| dt.to_rfc3339())
+        .ok_or_else(|| AppError::Other(format!("manifest updated_at 不是有效 Unix 秒时间戳: {ts}")))
 }
 
 fn copy_path_recursive(from: &Path, to: &Path) -> AppResult<()> {
@@ -1054,6 +1263,75 @@ mod tests {
         Ok(())
     }
 
+    fn write_codex_session(codex: &Path, id: &str, updated_at: i64) -> AppResult<PathBuf> {
+        let rollout_dir = codex.join("sessions").join("2026").join("05").join("12");
+        fs::create_dir_all(&rollout_dir)?;
+        let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
+        let meta = serde_json::json!({
+            "timestamp": "2026-05-12T10:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": id,
+                "cwd": "F:\\project\\portable-context",
+                "source": "cli",
+                "model_provider": "openai"
+            }
+        });
+        let event = serde_json::json!({
+            "timestamp": "2026-05-12T10:00:30Z",
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "portable context"}
+        });
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&meta)?,
+                serde_json::to_string(&event)?
+            ),
+        )?;
+
+        let conn = create_bundle_state(codex)?;
+        conn.execute(
+            "INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+                sandbox_policy, approval_mode, memory_mode, archived, tokens_used, has_user_event,
+                first_user_message, cli_version
+            ) VALUES (?1, ?2, ?3, ?4, 'cli', 'openai', 'F:\\project\\portable-context',
+                'Portable context', 'read-only', 'on-request', 'enabled', 0, 0, 1,
+                'Portable context', '')",
+            params![id, path.to_string_lossy(), updated_at, updated_at],
+        )?;
+        Ok(path)
+    }
+
+    fn create_bundle_state(codex: &Path) -> AppResult<rusqlite::Connection> {
+        fs::create_dir_all(codex)?;
+        let conn = rusqlite::Connection::open(codex.join("state_5.sqlite"))?;
+        conn.execute(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT,
+                created_at INTEGER,
+                updated_at INTEGER,
+                source TEXT,
+                model_provider TEXT,
+                cwd TEXT,
+                title TEXT,
+                sandbox_policy TEXT,
+                approval_mode TEXT,
+                memory_mode TEXT,
+                archived INTEGER,
+                tokens_used INTEGER,
+                has_user_event INTEGER,
+                first_user_message TEXT,
+                cli_version TEXT
+            )",
+            [],
+        )?;
+        Ok(conn)
+    }
+
     #[test]
     fn exports_verifies_and_imports_claude_bundle() -> AppResult<()> {
         let root = temp_dir("cc-session-manager-claude-bundle-test");
@@ -1095,14 +1373,24 @@ mod tests {
             ImportMode::Skip,
             false,
             true,
+            vec![ProjectPathMapping {
+                source_cwd: r"F:\work\sample-project".to_string(),
+                target_cwd: r"D:\work\sample-project".to_string(),
+            }],
         )?;
         assert_eq!(imported.len(), 1);
         assert!(imported[0].ok);
         assert_eq!(imported[0].history_appended, 2);
-        assert!(paths::claude_projects_dir(&import_claude)
-            .join("sample-project")
-            .join("claude-bundle-1.jsonl")
-            .is_file());
+        let imported_claude_path = paths::claude_projects_dir(&import_claude)
+            .join(paths::sanitize_slug(r"D:\work\sample-project"))
+            .join("claude-bundle-1.jsonl");
+        assert!(imported_claude_path.is_file());
+        let imported_jsonl = fs::read_to_string(&imported_claude_path)?;
+        let imported_event: Value = serde_json::from_str(imported_jsonl.lines().next().unwrap())?;
+        assert_eq!(
+            imported_event.get("cwd").and_then(Value::as_str),
+            Some(r"D:\work\sample-project")
+        );
         let imported_history = fs::read_to_string(import_claude.join("history.jsonl"))?;
         assert!(imported_history.contains("bundle one"));
         assert!(imported_history.contains("bundle two"));
@@ -1117,11 +1405,138 @@ mod tests {
             ImportMode::Skip,
             false,
             true,
+            vec![ProjectPathMapping {
+                source_cwd: r"F:\work\sample-project".to_string(),
+                target_cwd: r"D:\work\sample-project".to_string(),
+            }],
         )?;
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].ok);
         assert!(!skipped[0].rollout_written);
         assert_eq!(skipped[0].history_appended, 2);
+
+        fs::remove_dir_all(root).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn imports_codex_bundle_with_seconds_timestamp() -> AppResult<()> {
+        let root = temp_dir("cc-session-manager-codex-bundle-time-test");
+        let source_codex = root.join("source-codex");
+        let import_codex = root.join("import-codex");
+        let bundle_dir = root.join("bundles");
+        let id = "codex-bundle-time";
+        let updated_at = 1_777_777_777;
+        write_codex_session(&source_codex, id, updated_at)?;
+        create_bundle_state(&import_codex)?;
+
+        let reports = export_session_bundles(
+            Some(PROVIDER_CODEX.to_string()),
+            source_codex.to_string_lossy().into_owned(),
+            None,
+            bundle_dir.to_string_lossy().into_owned(),
+            vec![id.to_string()],
+            Some("test-machine".to_string()),
+            Some("default".to_string()),
+        )?;
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].ok);
+
+        let imported = import_session_bundles(
+            Some(PROVIDER_CODEX.to_string()),
+            bundle_dir.to_string_lossy().into_owned(),
+            import_codex.to_string_lossy().into_owned(),
+            None,
+            ImportMode::Overwrite,
+            true,
+            true,
+            vec![ProjectPathMapping {
+                source_cwd: r"F:\project\portable-context".to_string(),
+                target_cwd: r"D:\work\portable-context".to_string(),
+            }],
+        )?;
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].ok);
+        assert!(imported[0].threads_upserted);
+
+        let conn = rusqlite::Connection::open(import_codex.join("state_5.sqlite"))?;
+        let actual_updated_at: i64 =
+            conn.query_row("SELECT updated_at FROM threads WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
+        assert_eq!(actual_updated_at, updated_at);
+        let actual_cwd: String =
+            conn.query_row("SELECT cwd FROM threads WHERE id = ?1", [id], |r| r.get(0))?;
+        assert_eq!(actual_cwd, r"D:\work\portable-context");
+
+        let imported_rollout = import_codex
+            .join("sessions")
+            .join("2026")
+            .join("05")
+            .join("12")
+            .join(format!("rollout-{id}.jsonl"));
+        let first_line = fs::read_to_string(imported_rollout)?
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        let meta: Value = serde_json::from_str(&first_line)?;
+        assert_eq!(
+            meta.get("payload")
+                .and_then(|payload| payload.get("cwd"))
+                .and_then(Value::as_str),
+            Some(r"D:\work\portable-context")
+        );
+
+        let index_raw = fs::read_to_string(paths::session_index_path(&import_codex))?;
+        let index_line: Value = serde_json::from_str(index_raw.lines().next().unwrap())?;
+        assert_eq!(index_line.get("id").and_then(|v| v.as_str()), Some(id));
+        assert_eq!(
+            index_line.get("updated_at").and_then(|v| v.as_str()),
+            Some(unix_seconds_to_rfc3339(updated_at)?.as_str())
+        );
+        assert!(index_line.get("rollout_path").is_none());
+
+        fs::remove_dir_all(root).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn packs_only_the_requested_bundle_source() -> AppResult<()> {
+        let root = temp_dir("cc-session-manager-bundle-zip-source-test");
+        let export_root = root.join("export");
+        let bundle = export_root
+            .join("test-machine")
+            .join("default")
+            .join("batch-20260512T100000")
+            .join("session-1");
+        fs::create_dir_all(&bundle)?;
+        fs::write(bundle.join("manifest.json"), "{}")?;
+        fs::write(bundle.join("history.jsonl"), "history\n")?;
+        fs::write(export_root.join("unrelated.txt"), "must not be zipped")?;
+
+        let zip_path = export_root.join("session-1.zip");
+        let report = pack_bundles_zip(
+            bundle.to_string_lossy().into_owned(),
+            zip_path.to_string_lossy().into_owned(),
+        )?;
+        assert_eq!(report.files, 2);
+
+        let unpacked = root.join("unpacked");
+        unpack_zip(
+            zip_path.to_string_lossy().into_owned(),
+            unpacked.to_string_lossy().into_owned(),
+        )?;
+        assert!(unpacked.join("manifest.json").is_file());
+        assert!(unpacked.join("history.jsonl").is_file());
+        assert!(!unpacked.join("unrelated.txt").exists());
+
+        let temp_report = unpack_zip_to_temp(zip_path.to_string_lossy().into_owned())?;
+        let temp_unpacked = PathBuf::from(&temp_report.path);
+        assert!(temp_unpacked.join("manifest.json").is_file());
+        assert!(temp_unpacked.join("history.jsonl").is_file());
+        assert!(!temp_unpacked.join("unrelated.txt").exists());
+        fs::remove_dir_all(temp_unpacked).ok();
 
         fs::remove_dir_all(root).ok();
         Ok(())
@@ -1136,6 +1551,17 @@ pub fn pack_bundles_zip(src_dir: String, zip_path: String) -> AppResult<ZipRepor
     let out = PathBuf::from(&zip_path);
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent)?;
+    }
+    let src_canon = fs::canonicalize(&src)?;
+    if let Some(parent) = out.parent() {
+        let out_parent_canon = fs::canonicalize(parent)?;
+        if out_parent_canon == src_canon || out_parent_canon.starts_with(&src_canon) {
+            return Err(AppError::Path(format!(
+                "zip 输出路径不能位于被打包目录内部: 输出 {}, 源目录 {}",
+                out.to_string_lossy(),
+                src.to_string_lossy()
+            )));
+        }
     }
     let file = File::create(&out)?;
     let mut writer = BufWriter::new(file);
@@ -1433,4 +1859,14 @@ pub fn unpack_zip(zip_path: String, dst_dir: String) -> AppResult<ZipReport> {
         files: file_count,
         bytes: total_bytes,
     })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn unpack_zip_to_temp(zip_path: String) -> AppResult<ZipReport> {
+    let dir = std::env::temp_dir().join(format!(
+        "cc-session-manager-import-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    unpack_zip(zip_path, dir.to_string_lossy().into_owned())
 }

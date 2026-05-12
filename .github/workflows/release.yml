@@ -93,8 +93,16 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
-            See README.md for installation and usage notes.
-            This release includes desktop packages and platform-specific cc-sessions CLI packages.
+            This release updates the cross-device session export and import workflow.
+
+            Changes:
+            - Fixed ZIP export so selected sessions are packaged with their bundle files and manifest instead of packaging the whole export directory.
+            - Fixed imported session timestamps showing as more than 56 years ago.
+            - Added project path mapping during import so sessions can be assigned to target-device project directories.
+            - Added direct ZIP import: users can select a ZIP file and the app reads it automatically without manual extraction.
+            - Kept bundle path handling portable across devices while preserving session context.
+
+            Assets include desktop packages and platform-specific cc-sessions CLI packages.
           releaseDraft: false
           prerelease: false
 

@@ -1007,6 +1007,7 @@ fn bundle_import(ctx: &MenuContext) -> MenuResult<()> {
         mode,
         make_visible,
         strict,
+        Vec::new(),
     )
     .map_err(to_string)?;
     for report in reports {

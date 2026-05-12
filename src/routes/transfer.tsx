@@ -38,8 +38,16 @@ import {
 
 import { useSettings } from "@/stores/settings";
 import { useSessions } from "@/hooks/useSessions";
-import { api, type BundleListItem, type ImportMode, type SessionProvider } from "@/lib/api";
+import {
+  api,
+  type BundleListItem,
+  type ExportReport,
+  type ImportMode,
+  type ProjectPathMapping,
+  type SessionProvider,
+} from "@/lib/api";
 import { humanBytes } from "@/lib/format";
+import { basename, dirname, joinPath } from "@/lib/cwd";
 
 export default function TransferRoute({ provider = "codex" }: { provider?: SessionProvider }) {
   const settings = useSettings((s) => s.settings);
@@ -100,11 +108,14 @@ function ExportPanel({
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
-  const [lastOutRoot, setLastOutRoot] = useState<string | null>(null);
+  const [lastZipSource, setLastZipSource] = useState<string | null>(null);
 
   const pickDir = async () => {
     const picked = await openDialog({ directory: true, defaultPath: outDir || undefined });
-    if (typeof picked === "string") setOutDir(picked);
+    if (typeof picked === "string") {
+      setOutDir(picked);
+      setLastZipSource(null);
+    }
   };
 
   const toggle = (id: string) => {
@@ -143,23 +154,28 @@ function ExportPanel({
     }
   };
 
+  const exportIds = async (ids: string[]) => {
+    const r = await api.exportSessionBundles({
+      provider,
+      codex_dir: codexDir,
+      claude_dir: claudeDir,
+      out_dir: outDir,
+      ids,
+      machine_label: machineLabel || undefined,
+      export_group: exportGroup || undefined,
+    });
+    setLastZipSource(zipSourceFromReports(r));
+    return r;
+  };
+
   const exportSelected = async () => {
     if (!outDir) return toast.error("请先选择导出目录");
     if (selectedIds.size === 0) return toast.error("请先勾选要导出的会话");
     setRunning(true);
     try {
-      const r = await api.exportSessionBundles({
-        provider,
-        codex_dir: codexDir,
-        claude_dir: claudeDir,
-        out_dir: outDir,
-        ids: Array.from(selectedIds),
-        machine_label: machineLabel || undefined,
-        export_group: exportGroup || undefined,
-      });
+      const r = await exportIds(Array.from(selectedIds));
       const ok = r.filter((x) => x.ok).length;
       toast.success(`已导出 ${ok}/${r.length} 条会话数据`);
-      setLastOutRoot(outDir);
     } catch (e) {
       toast.error(String((e as Error)?.message ?? e));
     } finally {
@@ -182,7 +198,7 @@ function ExportPanel({
       });
       const ok = r.filter((x) => x.ok).length;
       toast.success(`已导出 ${ok}/${r.length} 条会话数据${activeOnly ? "（仅包含活跃记录）" : ""}`);
-      setLastOutRoot(outDir);
+      setLastZipSource(zipSourceFromReports(r));
     } catch (e) {
       toast.error(String((e as Error)?.message ?? e));
     } finally {
@@ -191,16 +207,30 @@ function ExportPanel({
   };
 
   const packZip = async () => {
-    if (!lastOutRoot && !outDir) return toast.error("请先导出到某个目录");
-    const src = lastOutRoot ?? outDir;
+    if (!outDir) return toast.error("请先选择导出目录");
+    if (selectedIds.size === 0 && !lastZipSource) {
+      return toast.error("请先勾选要导出的会话，或先完成一次导出");
+    }
     const zipPath = await saveDialog({
-      defaultPath: `${provider}-bundles-${Date.now()}.zip`,
+      defaultPath: joinPath(outDir, `${provider}-bundles-${Date.now()}.zip`),
       filters: [{ name: "Zip", extensions: ["zip"] }],
     });
     if (!zipPath) return;
     setRunning(true);
     try {
-      const r = await api.packBundlesZip(src, zipPath);
+      let zipSource = lastZipSource;
+      if (selectedIds.size > 0) {
+        const reports = await exportIds(Array.from(selectedIds));
+        zipSource = zipSourceFromReports(reports);
+        const ok = reports.filter((x) => x.ok).length;
+        if (!zipSource) {
+          throw new Error(`导出成功 ${ok}/${reports.length} 条，但没有可打包的会话目录`);
+        }
+      }
+      if (!zipSource) {
+        throw new Error("没有可打包的会话目录");
+      }
+      const r = await api.packBundlesZip(zipSource, zipPath);
       toast.success(`打包完成：${r.files} 个文件 · ${humanBytes(r.bytes)}`);
     } catch (e) {
       toast.error(String((e as Error)?.message ?? e));
@@ -225,7 +255,10 @@ function ExportPanel({
               <div className="flex gap-1.5">
                 <Input
                   value={outDir}
-                  onChange={(e) => setOutDir(e.target.value)}
+                  onChange={(e) => {
+                    setOutDir(e.target.value);
+                    setLastZipSource(null);
+                  }}
                   placeholder="选一个本地目录"
                   className="font-mono text-xs"
                 />
@@ -296,7 +329,7 @@ function ExportPanel({
                 size="sm"
                 variant="outline"
                 onClick={packZip}
-                disabled={running}
+                disabled={running || (selectedIds.size === 0 && !lastZipSource)}
                 className="gap-1.5"
               >
                 <FileArchive className="h-3.5 w-3.5" />
@@ -401,6 +434,17 @@ function ExportPanel({
   );
 }
 
+function zipSourceFromReports(reports: ExportReport[]): string | null {
+  const bundlePaths = reports
+    .filter((report) => report.ok && report.bundle_path)
+    .map((report) => report.bundle_path as string);
+  if (bundlePaths.length === 0) return null;
+  if (bundlePaths.length === 1) return bundlePaths[0];
+
+  const parentDirs = Array.from(new Set(bundlePaths.map(dirname)));
+  return parentDirs.length === 1 ? parentDirs[0] : null;
+}
+
 // ========================= 导入 =========================
 
 function ImportPanel({
@@ -419,6 +463,7 @@ function ImportPanel({
   const [strict, setStrict] = useState(true);
   const [running, setRunning] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
+  const [projectTargets, setProjectTargets] = useState<Record<string, string>>({});
 
   const pickDir = async () => {
     const picked = await openDialog({ directory: true });
@@ -432,22 +477,16 @@ function ImportPanel({
       filters: [{ name: "Zip", extensions: ["zip"] }],
     });
     if (typeof picked === "string") {
-      const tmp = await openDialog({
-        directory: true,
-        title: "选择解压目标目录",
-      });
-      if (typeof tmp === "string") {
-        setRunning(true);
-        try {
-          const r = await api.unpackZip(picked, tmp);
-          toast.success(`解压完成：${r.files} 文件 · ${humanBytes(r.bytes)}`);
-          setSrcDir(tmp);
-          await rescan(tmp);
-        } catch (e) {
-          toast.error(String((e as Error)?.message ?? e));
-        } finally {
-          setRunning(false);
-        }
+      setRunning(true);
+      try {
+        const r = await api.unpackZipToTemp(picked);
+        toast.success(`已读取 zip：${r.files} 文件 · ${humanBytes(r.bytes)}`);
+        setSrcDir(r.path);
+        await rescan(r.path);
+      } catch (e) {
+        toast.error(String((e as Error)?.message ?? e));
+      } finally {
+        setRunning(false);
       }
     }
   };
@@ -472,10 +511,56 @@ function ImportPanel({
     if (srcDir) void rescan(srcDir);
   }, [srcDir, rescan]);
 
+  const sourceProjects = useMemo(() => {
+    return Array.from(
+      new Set(
+        items
+          .map((item) => item.manifest.session_cwd.trim())
+          .filter((cwd) => cwd.length > 0),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [items]);
+
+  useEffect(() => {
+    setProjectTargets((prev) => {
+      const next: Record<string, string> = {};
+      for (const source of sourceProjects) {
+        next[source] = prev[source] ?? source;
+      }
+      return next;
+    });
+  }, [sourceProjects]);
+
+  const pickProjectTarget = async (source: string) => {
+    const picked = await openDialog({
+      directory: true,
+      defaultPath: projectTargets[source] || undefined,
+      title: `选择 ${basename(source)} 的目标项目目录`,
+    });
+    if (typeof picked === "string") {
+      setProjectTargets((prev) => ({ ...prev, [source]: picked }));
+    }
+  };
+
+  const buildProjectMappings = (): ProjectPathMapping[] => {
+    const mappings: ProjectPathMapping[] = [];
+    for (const source of sourceProjects) {
+      const target = (projectTargets[source] ?? "").trim();
+      if (!target) {
+        throw new Error(`请为源项目 ${source} 选择目标项目目录`);
+      }
+      if (target !== source) {
+        mappings.push({ source_cwd: source, target_cwd: target });
+      }
+    }
+    return mappings;
+  };
+
   const runImport = async () => {
     if (!srcDir) return toast.error("请先选择数据所在的目录或解压好的 zip 文件夹");
     setRunning(true);
     try {
+      const projectMappings = buildProjectMappings();
       const r = await api.importSessionBundles({
         provider,
         src_dir: srcDir,
@@ -484,6 +569,7 @@ function ImportPanel({
         mode,
         make_visible: provider === "codex" ? makeVisible : false,
         strict,
+        project_mappings: projectMappings,
       });
       const ok = r.filter((x) => x.ok).length;
       const skipped = r.filter((x) => x.skipped_reason).length;
@@ -514,12 +600,12 @@ function ImportPanel({
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">数据文件夹（如果是跨设备，请先将 zip 文件解压后再选择里面的文件夹）</Label>
+            <Label className="text-xs">数据来源</Label>
             <div className="flex gap-1.5">
               <Input
                 value={srcDir}
                 onChange={(e) => setSrcDir(e.target.value)}
-                placeholder="选择包含 manifest.json 的解压文件夹"
+                placeholder="选择包含 manifest.json 的文件夹，或直接导入 zip"
                 className="font-mono text-xs"
               />
               <Button variant="outline" size="sm" onClick={pickDir} className="shrink-0">
@@ -531,6 +617,53 @@ function ImportPanel({
             </div>
           </div>
           <Separator />
+          {sourceProjects.length > 0 && (
+            <>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="text-xs">项目归属映射</Label>
+                  <Badge variant="secondary" className="h-5 px-1.5 font-normal">
+                    {sourceProjects.length}
+                  </Badge>
+                </div>
+                <div className="rounded-md border">
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem] items-center gap-2 border-b bg-muted/40 px-3 py-2 text-[11px] font-medium text-muted-foreground">
+                    <span>源项目路径</span>
+                    <span>目标项目路径</span>
+                    <span>操作</span>
+                  </div>
+                  <div className="max-h-56 divide-y overflow-auto">
+                    {sourceProjects.map((source) => (
+                      <div
+                        key={source}
+                        className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem] items-center gap-2 px-3 py-2"
+                      >
+                        <span className="truncate font-mono text-[11px] text-muted-foreground" title={source}>
+                          {source}
+                        </span>
+                        <Input
+                          value={projectTargets[source] ?? ""}
+                          onChange={(e) =>
+                            setProjectTargets((prev) => ({ ...prev, [source]: e.target.value }))
+                          }
+                          className="h-8 font-mono text-[11px]"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => pickProjectTarget(source)}
+                        >
+                          浏览
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <Separator />
+            </>
+          )}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">冲突策略</Label>

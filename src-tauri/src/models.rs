@@ -454,6 +454,12 @@ pub enum ImportMode {
     Skip,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPathMapping {
+    pub source_cwd: String,
+    pub target_cwd: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportReport {
     pub session_id: String,

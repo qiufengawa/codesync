@@ -93,6 +93,7 @@ pub fn run() {
             bundle::import_session_bundles,
             bundle::pack_bundles_zip,
             bundle::unpack_zip,
+            bundle::unpack_zip_to_temp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

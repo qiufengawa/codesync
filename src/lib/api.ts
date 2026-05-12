@@ -392,6 +392,11 @@ export type ExportReport = {
 
 export type ImportMode = "keep_local" | "overwrite" | "skip";
 
+export type ProjectPathMapping = {
+  source_cwd: string;
+  target_cwd: string;
+};
+
 export type ImportReport = {
   session_id: string;
   ok: boolean;
@@ -744,6 +749,7 @@ export const api = {
     mode: ImportMode;
     make_visible: boolean;
     strict: boolean;
+    project_mappings: ProjectPathMapping[];
   }) =>
     invoke<ImportReport[]>("import_session_bundles", {
       provider: p.provider,
@@ -753,9 +759,12 @@ export const api = {
       mode: p.mode,
       makeVisible: p.make_visible,
       strict: p.strict,
+      projectMappings: p.project_mappings,
     }),
   packBundlesZip: (srcDir: string, zipPath: string) =>
     invoke<ZipReport>("pack_bundles_zip", { srcDir, zipPath }),
   unpackZip: (zipPath: string, dstDir: string) =>
     invoke<ZipReport>("unpack_zip", { zipPath, dstDir }),
+  unpackZipToTemp: (zipPath: string) =>
+    invoke<ZipReport>("unpack_zip_to_temp", { zipPath }),
 };
