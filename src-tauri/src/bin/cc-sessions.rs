@@ -62,6 +62,19 @@ struct CliContext {
     family_lock: family::FamilyLock,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSort {
+    Time,
+    Size,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewMode {
+    Conversation,
+    ConversationAndReasoning,
+    All,
+}
+
 fn main() {
     if let Err(err) = run_cli() {
         eprintln!("错误: {err}");
@@ -138,6 +151,8 @@ fn print_help() {
 用法:
   cc-sessions [全局选项] <命令> [命令选项]
 
+不带命令会进入交互菜单，这是日常使用的推荐入口。
+
 全局选项:
   --json                    输出 JSON
   --provider <codex|claude|all>
@@ -146,10 +161,10 @@ fn print_help() {
   -h, --help                显示帮助
 
 常用命令:
-  list [--archived] [--limit N]
-  search <关键词>
+  list [--archived] [--limit N] [--sort time|size]
+  search <关键词> [--sort time|size]
   projects [--archived]
-  preview <rollout路径> [--offset N] [--limit N]
+  preview <rollout路径> [--offset N] [--limit N] [--mode conversation|reasoning|all]
   meta <rollout路径>
   resume-command <session-id>
   stats <kpi|projects|models|timeseries|heatmap>
@@ -163,8 +178,9 @@ fn print_help() {
 示例:
   cc-sessions
   cc-sessions menu
-  cc-sessions list --limit 20
+  cc-sessions list --limit 20 --sort size
   cc-sessions --provider claude search "hello"
+  cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
   cc-sessions repair diagnose --json
   cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
 "#
@@ -174,18 +190,21 @@ fn print_help() {
 fn cmd_list(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
     let limit = take_usize(&mut args, "--limit")?.unwrap_or(usize::MAX);
+    let sort = parse_session_sort(take_value(&mut args, "--sort")?)?;
     ensure_no_args(&args)?;
 
     let mut list = load_sessions(ctx, session_provider(ctx)?)?;
     if !include_archived {
         list.retain(|session| !session.archived);
     }
+    sort_sessions(&mut list, sort);
     list.truncate(limit);
     output(ctx, &list, print_sessions)
 }
 
 fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
+    let sort = parse_session_sort(take_value(&mut args, "--sort")?)?;
     let query = take_value(&mut args, "--query")?.unwrap_or_else(|| args.join(" "));
     if query.trim().is_empty() {
         return Err(CliError::message("search 需要关键词"));
@@ -218,6 +237,7 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     if !include_archived {
         hits.retain(|session| !session.archived);
     }
+    sort_sessions(&mut hits, sort);
     output(ctx, &hits, print_sessions)
 }
 
@@ -233,11 +253,11 @@ fn cmd_projects(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
 fn cmd_preview(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let offset = take_usize(&mut args, "--offset")?.unwrap_or(0);
     let limit = take_usize(&mut args, "--limit")?.unwrap_or(40);
+    let mode = parse_preview_mode(take_value(&mut args, "--mode")?)?;
     let path = take_value(&mut args, "--path")?.or_else(|| pop_command(&mut args));
     ensure_no_args(&args)?;
     let path = required(path, "preview 需要 rollout 路径")?;
-    let events =
-        rollout::preview_session_range(Some(concrete_provider(ctx)?), path, offset, limit)?;
+    let events = collect_preview_events(concrete_provider(ctx)?, path, offset, limit, mode)?;
     output(ctx, &events, |events| {
         for event in events {
             println!(
@@ -249,6 +269,65 @@ fn cmd_preview(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             );
         }
     })
+}
+
+fn collect_preview_events(
+    provider: String,
+    path: String,
+    offset: usize,
+    limit: usize,
+    mode: PreviewMode,
+) -> CliResult<Vec<cc_session_manager_lib::models::PreviewEvent>> {
+    if mode == PreviewMode::All {
+        return Ok(rollout::preview_session_range(
+            Some(provider),
+            path,
+            offset,
+            limit,
+        )?);
+    }
+
+    let mut raw_offset = offset;
+    let mut selected = Vec::with_capacity(limit);
+    let batch = 100usize;
+    loop {
+        let events = rollout::preview_session_range(
+            Some(provider.clone()),
+            path.clone(),
+            raw_offset,
+            batch,
+        )?;
+        let fetched = events.len();
+        if fetched == 0 {
+            break;
+        }
+        for event in events {
+            if preview_event_visible(&event, mode) {
+                selected.push(event);
+                if selected.len() >= limit {
+                    return Ok(selected);
+                }
+            }
+        }
+        raw_offset += fetched;
+        if fetched < batch {
+            break;
+        }
+    }
+    Ok(selected)
+}
+
+fn preview_event_visible(
+    event: &cc_session_manager_lib::models::PreviewEvent,
+    mode: PreviewMode,
+) -> bool {
+    match mode {
+        PreviewMode::Conversation => rollout::preview_event_is_conversation(event),
+        PreviewMode::ConversationAndReasoning => {
+            rollout::preview_event_is_conversation_or_reasoning(event)
+        }
+        PreviewMode::All => true,
+    }
 }
 
 fn cmd_meta(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
@@ -1069,6 +1148,23 @@ fn load_sessions(ctx: &CliContext, provider: String) -> CliResult<Vec<SessionSum
     }
 }
 
+fn sort_sessions(list: &mut [SessionSummary], sort: SessionSort) {
+    match sort {
+        SessionSort::Time => {
+            list.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+        }
+        SessionSort::Size => {
+            list.sort_by(|a, b| {
+                a.tokens_used
+                    .cmp(&b.tokens_used)
+                    .then_with(|| a.rollout_bytes.cmp(&b.rollout_bytes))
+                    .then_with(|| b.updated_at.cmp(&a.updated_at))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        }
+    }
+}
+
 fn group_projects(list: Vec<SessionSummary>, include_archived: bool) -> Vec<ProjectGroup> {
     let mut groups: HashMap<String, ProjectGroup> = HashMap::new();
     for session in list {
@@ -1131,6 +1227,29 @@ fn parse_switch_strategy(value: Option<String>) -> CliResult<SwitchStrategy> {
     }
 }
 
+fn parse_session_sort(value: Option<String>) -> CliResult<SessionSort> {
+    match value.as_deref().unwrap_or("time") {
+        "time" => Ok(SessionSort::Time),
+        "size" => Ok(SessionSort::Size),
+        other => Err(CliError::message(format!(
+            "不支持的 sort: {other}，可用值: time, size"
+        ))),
+    }
+}
+
+fn parse_preview_mode(value: Option<String>) -> CliResult<PreviewMode> {
+    match value.as_deref().unwrap_or("conversation") {
+        "conversation" => Ok(PreviewMode::Conversation),
+        "reasoning" | "conversation-and-reasoning" | "conversation_and_reasoning" => {
+            Ok(PreviewMode::ConversationAndReasoning)
+        }
+        "all" => Ok(PreviewMode::All),
+        other => Err(CliError::message(format!(
+            "不支持的 preview mode: {other}，可用值: conversation, reasoning, all"
+        ))),
+    }
+}
+
 fn parse_import_mode(value: Option<String>) -> CliResult<ImportMode> {
     match value.as_deref().unwrap_or("skip") {
         "skip" => Ok(ImportMode::Skip),
@@ -1143,13 +1262,15 @@ fn parse_import_mode(value: Option<String>) -> CliResult<ImportMode> {
 }
 
 fn print_sessions(sessions: &Vec<SessionSummary>) {
-    println!("updated_at\tprovider\tarchived\tid\tcwd\ttitle");
+    println!("updated_at\tprovider\tarchived\ttokens\tbytes\tid\tcwd\ttitle");
     for session in sessions {
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             session.updated_at,
             session.provider,
             session.archived,
+            session.tokens_used,
+            session.rollout_bytes,
             session.id,
             session.cwd,
             compact(&session.title, 80)

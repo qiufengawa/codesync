@@ -80,10 +80,12 @@ export const SessionCard = memo(function SessionCard({
   return (
     <div
       className={cn(
-        "group relative w-full min-w-0 overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm transition-all",
-        "hover:border-foreground/20 hover:shadow-md",
+        "group relative w-full min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm transition-all duration-200",
+        "before:pointer-events-none before:absolute before:bottom-3 before:left-0 before:top-3 before:w-[3px] before:rounded-r-full before:bg-emerald-500 before:opacity-0 before:transition-opacity before:duration-200",
+        "hover:-translate-y-[0.5px] hover:border-foreground/15 hover:shadow-[0_2px_8px_-3px_rgb(0_0_0/0.08)]",
         s.archived && "opacity-60",
-        selected && "border-emerald-500/70 bg-emerald-50/40 ring-1 ring-emerald-500/30 dark:bg-emerald-950/20",
+        selected &&
+          "border-emerald-500/45 bg-emerald-500/[0.035] before:opacity-100 dark:border-emerald-500/35 dark:bg-emerald-500/[0.07]",
       )}
     >
       <div className="flex min-w-0 gap-3 p-4">
@@ -96,7 +98,7 @@ export const SessionCard = memo(function SessionCard({
 
         <div className="min-w-0 flex-1 space-y-2">
           {/* 顶部元信息：项目名（可选） + id + 模型 + 时间 */}
-          <div className="flex min-w-0 items-center gap-2 text-xs">
+          <div className="flex min-w-0 items-center gap-x-2 gap-y-1 text-xs">
             {showProject && (
               <>
                 <Tooltip>
@@ -109,7 +111,7 @@ export const SessionCard = memo(function SessionCard({
                     {s.cwd}
                   </TooltipContent>
                 </Tooltip>
-                <span className="text-muted-foreground/50">·</span>
+                <MetaDot />
               </>
             )}
             <span className="shrink-0 font-mono text-muted-foreground">{shortId(s.id)}</span>
@@ -241,30 +243,33 @@ export const SessionCard = memo(function SessionCard({
 
           {/* 底部：操作按钮 + 右侧数据 */}
           <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
-            <Button variant="outline" size="sm" onClick={() => onPreview(s)} className="h-8 gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => onPreview(s)} className="h-8 gap-1.5 border-border/70">
               <Eye className="h-3.5 w-3.5" />
               预览
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => onCopyResume(s)} className="h-8 gap-1.5">
+            <Button variant="ghost" size="sm" onClick={() => onCopyResume(s)} className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
               <Copy className="h-3.5 w-3.5" />
               resume
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => onRevealCwd(s)} className="h-8 gap-1.5">
+            <Button variant="ghost" size="sm" onClick={() => onRevealCwd(s)} className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
               <FolderOpen className="h-3.5 w-3.5" />
               打开目录
             </Button>
 
-            <div className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <div className="ml-auto flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
               {s.tokens_used > 0 && (
-                <span className="tabular-nums">{humanTokens(s.tokens_used)} token</span>
+                <span className="inline-flex items-baseline gap-1 tabular-nums">
+                  <span className="font-medium text-foreground/75">{humanTokens(s.tokens_used)}</span>
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">tok</span>
+                </span>
               )}
-              {s.tokens_used > 0 && <span className="text-muted-foreground/40">·</span>}
-              <span className="tabular-nums">{humanBytes(s.rollout_bytes)}</span>
+              {s.tokens_used > 0 && <MetaDot />}
+              <span className="tabular-nums font-medium text-foreground/75">{humanBytes(s.rollout_bytes)}</span>
             </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="ml-0.5 h-8 w-8 text-muted-foreground hover:text-foreground">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -299,7 +304,7 @@ export const SessionCard = memo(function SessionCard({
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="h-4 w-4" />
-                      删除…
+                      删除会话
                     </DropdownMenuItem>
                   </>
                 )}
@@ -311,6 +316,15 @@ export const SessionCard = memo(function SessionCard({
     </div>
   );
 });
+
+function MetaDot() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block h-1 w-1 shrink-0 rounded-full bg-muted-foreground/35"
+    />
+  );
+}
 
 function Hl({ text, q }: { text: string; q: string }) {
   const parts = highlight(text, q);

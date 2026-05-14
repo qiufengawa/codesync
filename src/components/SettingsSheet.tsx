@@ -42,6 +42,8 @@ export function SettingsSheet({ trigger }: Props) {
   const [codexValidation, setCodexValidation] = useState<DirValidation | null>(null);
   const [claudeValidation, setClaudeValidation] = useState<DirValidation | null>(null);
   const [updateState, setUpdateState] = useState<UpdateCheckResult>({ state: "idle" });
+  const [currentVersion, setCurrentVersion] = useState("");
+  const [currentVersionError, setCurrentVersionError] = useState("");
 
   useEffect(() => {
     if (!settings) return;
@@ -49,6 +51,18 @@ export function SettingsSheet({ trigger }: Props) {
     setClaude(settings.claude_dir);
     setBackup(settings.backup_dir);
   }, [settings]);
+
+  useEffect(() => {
+    api.appVersion()
+      .then((version) => {
+        setCurrentVersion(version);
+        setCurrentVersionError("");
+      })
+      .catch((e: any) => {
+        setCurrentVersion("");
+        setCurrentVersionError(String(e?.message ?? e));
+      });
+  }, []);
 
   useEffect(() => {
     if (!codex) return;
@@ -238,7 +252,7 @@ export function SettingsSheet({ trigger }: Props) {
               <div className="min-w-0">
                 <Label className="text-sm font-medium">版本更新</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  检查 GitHub Release，下载和覆盖安装由用户自行完成。
+                  检查 GitHub Release 更新。
                 </p>
               </div>
               <Button
@@ -252,7 +266,12 @@ export function SettingsSheet({ trigger }: Props) {
                 检查更新
               </Button>
             </div>
-            <UpdateStatus state={updateState} onOpenRelease={openReleasePage} />
+            <UpdateStatus
+              state={updateState}
+              currentVersion={currentVersion}
+              currentVersionError={currentVersionError}
+              onOpenRelease={openReleasePage}
+            />
           </div>
         </div>
 
@@ -268,15 +287,21 @@ export function SettingsSheet({ trigger }: Props) {
 
 function UpdateStatus({
   state,
+  currentVersion,
+  currentVersionError,
   onOpenRelease,
 }: {
   state: UpdateCheckResult;
+  currentVersion: string;
+  currentVersionError: string;
   onOpenRelease: () => void;
 }) {
   if (state.state === "idle") {
     return (
       <div className="text-xs text-muted-foreground">
-        点击检查后会读取 `ccpopy/cc-sessions` 的最新 Release。
+        {currentVersionError
+          ? `当前版本读取失败：${currentVersionError}`
+          : `当前版本：${currentVersion || "读取中…"}`}
       </div>
     );
   }

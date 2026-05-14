@@ -74,14 +74,9 @@ npm run cli:build
 src-tauri/target/release/cc-sessions
 ```
 
-Windows 下文件名为 `cc-sessions.exe`。也可以直接运行：
+Windows 下文件名为 `cc-sessions.exe`。
 
-```bash
-npm run cli:run -- list --limit 20
-npm run cli:run -- -- --json repair diagnose
-```
-
-直接启动交互式菜单：
+推荐先使用交互式菜单。直接运行 CLI 不带子命令时会进入菜单模式：
 
 ```bash
 npm run cli:run
@@ -93,26 +88,34 @@ Windows release 版构建后可直接运行：
 .\src-tauri\target\release\cc-sessions.exe
 ```
 
-进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
+进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。列表页还支持 `s` 选择多个当前页序号、`u` 取消选择、`c` 清空选择、`d` 删除已选会话；选择序号可以用空格或逗号分隔，也支持 `1-3` 这种范围。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
 
-交互菜单里的“预览会话内容”默认只显示用户消息和助手消息，不显示工具调用、工具返回和元数据。如需排查完整 JSONL 事件流，可在预览模式中选择“全部事件”。
+交互菜单里的“预览会话内容”默认只显示 Codex / Claude Code 应用中可见的用户消息和助手消息，不显示工具调用、工具返回、元数据，也会过滤 Codex 注入的 AGENTS 指令和环境上下文。如需排查完整 JSONL 事件流，可在预览模式中选择“全部事件”。
 
-常用命令：
+需要脚本化或机器可读输出时，再使用子命令：
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions -- list --limit 20 --sort size
+cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions -- --json repair diagnose
+```
+
+常用脚本化命令：
 
 ```bash
 cc-sessions
 cc-sessions menu
-cc-sessions list --limit 20
+cc-sessions list --limit 20 --sort size
 cc-sessions --provider claude search "关键词"
 cc-sessions projects --archived
 cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
+cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
 cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
 cc-sessions repair diagnose --json
 cc-sessions repair index --dry-run
 cc-sessions bundle export --out-dir ./bundles --id <session-id>
 ```
 
-默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖。需要机器可读输出时加 `--json`。
+默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
 
 ### CLI 修复项说明
 

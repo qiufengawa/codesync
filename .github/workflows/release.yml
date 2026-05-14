@@ -93,14 +93,15 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
-            This release updates the cross-device session export and import workflow.
+            This release improves session filtering, preview accuracy, and CLI cleanup workflows.
 
             Changes:
-            - Fixed ZIP export so selected sessions are packaged with their bundle files and manifest instead of packaging the whole export directory.
-            - Fixed imported session timestamps showing as more than 56 years ago.
-            - Added project path mapping during import so sessions can be assigned to target-device project directories.
-            - Added direct ZIP import: users can select a ZIP file and the app reads it automatically without manual extraction.
-            - Kept bundle path handling portable across devices while preserving session context.
+            - Added size sorting for desktop and CLI session lists, ordered from low token usage to high token usage.
+            - Defaulted previews to conversation-only messages and filtered Codex internal context such as AGENTS.md instructions and environment metadata.
+            - Added a preview action to copy the session ID directly.
+            - Improved preview layout so the user-message rewind action no longer reserves blank space on the far right.
+            - Added CLI menu support for selecting multiple sessions and deleting the selected sessions after explicit confirmation.
+            - Updated README CLI guidance to recommend the interactive menu first and document the new sorting, preview, and multi-select controls.
 
             Assets include desktop packages and platform-specific cc-sessions CLI packages.
           releaseDraft: false

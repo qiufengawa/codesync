@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
 
 use cc_session_manager_lib::models::{
@@ -105,9 +105,10 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
         println!("1. 查看会话列表");
         println!("2. 搜索会话");
         println!("3. 按项目查看");
-        println!("4. 输入 session id 操作");
-        println!("5. 返回上一层");
-        println!("6. 返回主菜单");
+        println!("4. 按大小查看（token 从小到大）");
+        println!("5. 输入 session id 操作");
+        println!("6. 返回上一层");
+        println!("7. 返回主菜单");
         println!("0. 退出");
 
         match prompt("请选择: ")?.as_str() {
@@ -142,6 +143,15 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
                 other => return Ok(other),
             },
             "4" => {
+                let include_archived = confirm_default_no("是否包含已归档会话？")?;
+                let mut sessions = load_sessions(ctx, provider, include_archived)?;
+                sort_sessions_by_size(&mut sessions);
+                match browse_sessions(ctx, provider, sessions, "按大小：token 从小到大")? {
+                    Flow::Back => {}
+                    other => return Ok(other),
+                }
+            }
+            "5" => {
                 let id = prompt_required("请输入 session id 或前缀: ")?;
                 let sessions = load_sessions(ctx, provider, true)?;
                 match find_session(&sessions, &id) {
@@ -155,8 +165,8 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
                     }
                 }
             }
-            "5" => return Ok(Flow::Back),
-            "6" => return Ok(Flow::Main),
+            "6" => return Ok(Flow::Back),
+            "7" => return Ok(Flow::Main),
             "0" => return Ok(Flow::Exit),
             _ => {
                 println!("无效选择。");
@@ -220,7 +230,7 @@ fn projects_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
 fn browse_sessions(
     ctx: &mut MenuContext,
     provider: &str,
-    sessions: Vec<SessionSummary>,
+    mut sessions: Vec<SessionSummary>,
     title: &str,
 ) -> MenuResult<Flow> {
     if sessions.is_empty() {
@@ -229,33 +239,53 @@ fn browse_sessions(
     }
 
     let mut page = 0usize;
+    let mut selected_ids = BTreeSet::<String>::new();
     loop {
+        if sessions.is_empty() {
+            println!("当前列表已没有会话。");
+            return pause();
+        }
+        selected_ids.retain(|id| sessions.iter().any(|session| session.id == *id));
         let total_pages = sessions.len().div_ceil(PAGE_SIZE);
+        if page >= total_pages {
+            page = total_pages.saturating_sub(1);
+        }
         let start = page * PAGE_SIZE;
         let end = (start + PAGE_SIZE).min(sessions.len());
         print_header(
             title,
-            &[(
-                "范围",
-                &format!("{}-{} / {}", start + 1, end, sessions.len()),
-            )],
+            &[
+                (
+                    "范围",
+                    &format!("{}-{} / {}", start + 1, end, sessions.len()),
+                ),
+                ("已选", &selected_ids.len().to_string()),
+            ],
         );
         for (offset, session) in sessions[start..end].iter().enumerate() {
+            let selected = if selected_ids.contains(&session.id) {
+                "*"
+            } else {
+                " "
+            };
             println!(
-                "{:>2}. {}  {}  {}  {}",
+                "{:>2}. [{}] {}  {}  {:>10} token  {}  {}",
                 offset + 1,
+                selected,
                 short_timestamp(session.updated_at),
                 if session.archived {
                     "archived"
                 } else {
                     "active  "
                 },
+                session.tokens_used,
                 compact(&session.id, 12),
                 compact(&session.title, 64)
             );
             println!("    {}", compact(&session.cwd, 90));
         }
-        println!("n. 下一页    p. 上一页    b. 返回上一层    m. 返回主菜单    0. 退出");
+        println!("n. 下一页    p. 上一页    s. 选择    u. 取消选择    c. 清空选择");
+        println!("d. 删除已选  b. 返回上一层    m. 返回主菜单    0. 退出");
         println!("当前页: {}/{}", page + 1, total_pages);
 
         let input = prompt("输入序号选择会话: ")?;
@@ -267,6 +297,34 @@ fn browse_sessions(
             }
             "p" | "P" => {
                 page = page.saturating_sub(1);
+            }
+            "s" | "S" => {
+                let indexes = prompt_page_indexes(end - start, "选择当前页序号")?;
+                for index in indexes {
+                    selected_ids.insert(sessions[start + index].id.clone());
+                }
+            }
+            "u" | "U" => {
+                let indexes = prompt_page_indexes(end - start, "取消选择当前页序号")?;
+                for index in indexes {
+                    selected_ids.remove(&sessions[start + index].id);
+                }
+            }
+            "c" | "C" => {
+                selected_ids.clear();
+            }
+            "d" | "D" => {
+                let selected = sessions
+                    .iter()
+                    .filter(|session| selected_ids.contains(&session.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let deleted = delete_selected_sessions(ctx, provider, &selected)?;
+                if !deleted.is_empty() {
+                    let deleted_ids = deleted.into_iter().collect::<BTreeSet<_>>();
+                    selected_ids.retain(|id| !deleted_ids.contains(id));
+                    sessions.retain(|session| !deleted_ids.contains(&session.id));
+                }
             }
             "b" | "B" => return Ok(Flow::Back),
             "m" | "M" => return Ok(Flow::Main),
@@ -285,6 +343,49 @@ fn browse_sessions(
                 }
             },
         }
+    }
+}
+
+fn prompt_page_indexes(page_len: usize, label: &str) -> MenuResult<Vec<usize>> {
+    let input = prompt(&format!("{label}，多个可用空格或逗号，支持 1-3: "))?;
+    parse_index_list(&input, page_len)
+}
+
+fn parse_index_list(input: &str, len: usize) -> MenuResult<Vec<usize>> {
+    let mut indexes = BTreeSet::new();
+    for part in input.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start = parse_one_based_index(start.trim(), len)?;
+            let end = parse_one_based_index(end.trim(), len)?;
+            let (from, to) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            indexes.extend(from..=to);
+        } else {
+            indexes.insert(parse_one_based_index(part, len)?);
+        }
+    }
+    if indexes.is_empty() {
+        Err("至少需要输入一个当前页序号。".to_string())
+    } else {
+        Ok(indexes.into_iter().collect())
+    }
+}
+
+fn parse_one_based_index(input: &str, len: usize) -> MenuResult<usize> {
+    let value = input
+        .parse::<usize>()
+        .map_err(|_| format!("无效序号: {input}"))?;
+    if value == 0 || value > len {
+        Err(format!("序号超出当前页范围: {value}"))
+    } else {
+        Ok(value - 1)
     }
 }
 
@@ -430,9 +531,9 @@ fn collect_preview_events(
 
 fn preview_event_visible(event: &PreviewEvent, mode: PreviewMode) -> bool {
     match mode {
-        PreviewMode::Conversation => matches!(event.role.as_str(), "user" | "assistant"),
+        PreviewMode::Conversation => rollout::preview_event_is_conversation(event),
         PreviewMode::ConversationAndReasoning => {
-            matches!(event.role.as_str(), "user" | "assistant" | "reasoning")
+            rollout::preview_event_is_conversation_or_reasoning(event)
         }
         PreviewMode::All => true,
     }
@@ -565,6 +666,82 @@ fn delete_session(ctx: &MenuContext, provider: &str, session: &SessionSummary) -
     }
     pause()?;
     Ok(())
+}
+
+fn delete_selected_sessions(
+    ctx: &MenuContext,
+    provider: &str,
+    selected: &[SessionSummary],
+) -> MenuResult<Vec<String>> {
+    if selected.is_empty() {
+        println!("尚未选择会话。");
+        pause()?;
+        return Ok(Vec::new());
+    }
+
+    let total_tokens = selected
+        .iter()
+        .map(|session| session.tokens_used)
+        .sum::<i64>();
+    let total_bytes = selected
+        .iter()
+        .map(|session| session.rollout_bytes)
+        .sum::<u64>();
+    println!(
+        "将删除 {} 条会话，共 {} token，{} bytes。",
+        selected.len(),
+        total_tokens,
+        total_bytes
+    );
+    for session in selected.iter().take(10) {
+        println!(
+            "  {}  {:>10} token  {}",
+            session.id,
+            session.tokens_used,
+            compact(&session.title, 70)
+        );
+    }
+    if selected.len() > 10 {
+        println!("  ... 还有 {} 条", selected.len() - 10);
+    }
+
+    if !confirm_yes("这是破坏性操作。请输入 yes 确认删除已选会话。")? {
+        println!("已取消。");
+        pause()?;
+        return Ok(Vec::new());
+    }
+
+    let ids = selected
+        .iter()
+        .map(|session| session.id.clone())
+        .collect::<Vec<_>>();
+    let results = sessions::delete_sessions(
+        Some(provider.to_string()),
+        ctx.codex_dir.clone(),
+        Some(ctx.claude_dir.clone()),
+        ids,
+    )
+    .map_err(to_string)?;
+
+    let deleted = results
+        .iter()
+        .filter(|result| result.ok)
+        .map(|result| result.id.clone())
+        .collect::<Vec<_>>();
+    println!("已删除 {}/{} 条。", deleted.len(), results.len());
+    for result in results
+        .iter()
+        .filter(|result| !result.ok || result.error.is_some())
+    {
+        println!(
+            "{} ok={} error={}",
+            result.id,
+            result.ok,
+            result.error.as_deref().unwrap_or("")
+        );
+    }
+    pause()?;
+    Ok(deleted)
 }
 
 fn stats_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
@@ -1509,6 +1686,7 @@ fn show_interactive_help() -> MenuResult<()> {
     println!("直接运行 cc-sessions 会进入交互菜单。");
     println!("输入菜单序号即可进入下一层，例如 1 进入 Codex 会话。");
     println!("列表页支持 n 下一页、p 上一页、b 返回上一层、m 返回主菜单、0 退出。");
+    println!("列表页支持 s 多选当前页序号、u 取消选择、c 清空选择、d 删除已选会话。");
     println!("会话预览默认只显示用户和助手消息；选择“全部事件”才会显示工具调用。");
     println!("删除、覆盖恢复、清理和分支切换等危险操作需要输入 yes 确认。");
     println!("脚本用法仍然保留，例如 cc-sessions list --limit 20。");
@@ -1549,6 +1727,16 @@ fn group_projects(sessions: Vec<SessionSummary>) -> Vec<ProjectGroup> {
     let mut out = groups.into_values().collect::<Vec<_>>();
     out.sort_by_key(|group| std::cmp::Reverse(group.latest_updated_at));
     out
+}
+
+fn sort_sessions_by_size(sessions: &mut [SessionSummary]) {
+    sessions.sort_by(|a, b| {
+        a.tokens_used
+            .cmp(&b.tokens_used)
+            .then_with(|| a.rollout_bytes.cmp(&b.rollout_bytes))
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
 }
 
 fn find_session(sessions: &[SessionSummary], input: &str) -> MenuResult<SessionSummary> {

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-type View = "time" | "project";
+export type View = "time" | "project" | "size";
 
 type State = {
   view: View;

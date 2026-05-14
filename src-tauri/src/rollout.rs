@@ -131,6 +131,121 @@ fn trim(s: &str, n: usize) -> String {
     }
 }
 
+pub fn preview_event_is_conversation(event: &PreviewEvent) -> bool {
+    if is_internal_codex_context_message(event) {
+        return false;
+    }
+    if !matches!(event.role.as_str(), "user" | "assistant") {
+        return false;
+    }
+
+    let raw_message_role = event
+        .raw
+        .get("message")
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str);
+    if raw_message_role.is_some() {
+        return true;
+    }
+
+    raw_type(event) == "response_item" && payload_type(event) == "message"
+}
+
+pub fn preview_event_is_conversation_or_reasoning(event: &PreviewEvent) -> bool {
+    preview_event_is_conversation(event) || event.role == "reasoning"
+}
+
+fn is_internal_codex_context_message(event: &PreviewEvent) -> bool {
+    if event.role != "user" {
+        return false;
+    }
+    let text = preview_event_text(event).trim().to_string();
+    if text.is_empty() {
+        return false;
+    }
+    let first_line = normalize_prompt_heading(text.lines().next().unwrap_or(""));
+    (first_line.starts_with("AGENTS.md instructions for ") && text.contains("<INSTRUCTIONS>"))
+        || (first_line == "<environment_context>" && text.contains("</environment_context>"))
+}
+
+fn normalize_prompt_heading(line: &str) -> String {
+    line.trim().trim_start_matches('#').trim_start().to_string()
+}
+
+fn raw_type(event: &PreviewEvent) -> &str {
+    event.raw.get("type").and_then(Value::as_str).unwrap_or("")
+}
+
+fn payload_type(event: &PreviewEvent) -> &str {
+    event
+        .raw
+        .get("payload")
+        .and_then(|payload| payload.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn preview_event_text(event: &PreviewEvent) -> String {
+    if let Some(message) = event.raw.get("message") {
+        let content = message.get("content");
+        let text = flatten_rich_content(content);
+        if !text.is_empty() {
+            return text;
+        }
+    }
+
+    let payload = event.raw.get("payload");
+    if let Some(message) = payload
+        .and_then(|payload| payload.get("message"))
+        .and_then(Value::as_str)
+    {
+        return message.to_string();
+    }
+    if let Some(text) = payload
+        .and_then(|payload| payload.get("text"))
+        .and_then(Value::as_str)
+    {
+        return text.to_string();
+    }
+
+    let text = flatten_rich_content(payload.and_then(|payload| payload.get("content")));
+    if text.is_empty() {
+        event.text_summary.clone()
+    } else {
+        text
+    }
+}
+
+fn flatten_rich_content(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(flatten_rich_content_item)
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        _ => String::new(),
+    }
+}
+
+fn flatten_rich_content_item(item: &Value) -> Option<String> {
+    if let Some(text) = item.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(text) = item.get("content").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    let nested = flatten_rich_content(item.get("content"));
+    if nested.is_empty() {
+        None
+    } else {
+        Some(nested)
+    }
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_session_head(
     provider: Option<String>,

@@ -1,12 +1,13 @@
 import { useLocation } from "react-router-dom";
-import { Archive, Clock, FolderKanban, RefreshCw, Trash2, X } from "lucide-react";
+import { Archive, ArrowDown01, Clock, FolderKanban, RefreshCw, Trash2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/SearchInput";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import { useSelection } from "@/stores/selection";
-import { useView } from "@/stores/view";
+import { useView, type View } from "@/stores/view";
 
 type Props = {
   title?: string;
@@ -45,67 +46,117 @@ export function TopBar({
       loc.pathname.startsWith("/codex/backups/") ||
       loc.pathname.startsWith("/claude/backups/"));
 
+  const hasSelection = selected.size > 0;
+
   return (
-    <header className="shrink-0 border-b bg-background">
-      <div className="flex h-14 min-w-0 items-center gap-3 px-6">
+    <header className="relative shrink-0 border-b border-border/60 bg-background/95 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-gradient-to-r after:from-transparent after:via-border/40 after:to-transparent">
+      <div className="flex h-14 min-w-0 items-center gap-2.5 px-4 sm:gap-3 sm:px-6">
         {title && (
-          <h1 className="shrink-0 text-base font-semibold">{title}</h1>
+          <div className="flex shrink-0 items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="h-4 w-[3px] rounded-full bg-gradient-to-b from-foreground/70 via-foreground/40 to-foreground/10"
+            />
+            <h1 className="whitespace-nowrap text-[15px] font-semibold tracking-tight text-foreground">
+              {title}
+            </h1>
+          </div>
         )}
 
         {autoShowTools && (
           <>
-            {title && <Separator orientation="vertical" className="h-6" />}
-            <SearchInput value={query} onChange={setQuery} className="w-80 min-w-0 max-w-full" />
-            <Tabs value={view} onValueChange={(v) => setView(v as "time" | "project")}>
+            {title && <Separator orientation="vertical" className="h-5 bg-border/60" />}
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              className="min-w-0 flex-1 basis-56 sm:max-w-80"
+            />
+            <Tabs value={view} onValueChange={(v) => setView(v as View)} className="shrink-0">
               <TabsList className="h-9">
-                <TabsTrigger value="time" className="gap-1.5">
+                <TabsTrigger value="time" className="gap-1.5 px-2.5 text-xs">
                   <Clock className="h-3.5 w-3.5" />
-                  按时间
+                  时间
                 </TabsTrigger>
-                <TabsTrigger value="project" className="gap-1.5">
+                <TabsTrigger value="project" className="gap-1.5 px-2.5 text-xs">
                   <FolderKanban className="h-3.5 w-3.5" />
-                  按项目
+                  项目
+                </TabsTrigger>
+                <TabsTrigger value="size" className="gap-1.5 px-2.5 text-xs">
+                  <ArrowDown01 className="h-3.5 w-3.5" />
+                  大小
                 </TabsTrigger>
               </TabsList>
             </Tabs>
           </>
         )}
 
-        <div className="ml-auto flex min-w-0 items-center gap-1.5">
-          {selected.size > 0 && (
-            <>
-              <span className="text-xs text-muted-foreground">选中 {selected.size} 条</span>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {hasSelection && (
+            <div className="flex h-8 items-center gap-0.5 rounded-md border border-emerald-500/30 bg-emerald-500/8 pl-2.5 pr-1 shadow-[inset_0_1px_0_0_hsl(var(--background))] dark:bg-emerald-500/10">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                <span aria-hidden="true" className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </span>
+                已选 <span className="tabular-nums">{selected.size}</span>
+              </span>
+              <Separator orientation="vertical" className="mx-1 h-4 bg-emerald-500/30" />
               {onBulkBackup && (
-                <Button variant="outline" size="sm" onClick={onBulkBackup} className="gap-1.5">
-                  <Archive className="h-4 w-4" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onBulkBackup}
+                  className="h-7 gap-1.5 px-2 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200"
+                >
+                  <Archive className="h-3.5 w-3.5" />
                   备份
                 </Button>
               )}
               {onBulkDelete && (
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={onBulkDelete}
-                  className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  className="h-7 gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                   删除
                 </Button>
               )}
-              <Button variant="ghost" size="icon" onClick={clearSel} className="h-8 w-8">
-                <X className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={clearSel}
+                className="h-7 w-7 text-muted-foreground hover:bg-emerald-500/15 hover:text-foreground"
+                aria-label="清除选择"
+              >
+                <X className="h-3.5 w-3.5" />
               </Button>
-              <Separator orientation="vertical" className="mx-0.5 h-6" />
-            </>
+            </div>
           )}
+
           {children}
+
           {stats && (
-            <span className="text-xs text-muted-foreground tabular-nums">{stats}</span>
+            <Badge
+              variant="outline"
+              className="h-7 gap-1.5 border-border/70 bg-muted/40 px-2 text-[11px] font-medium tabular-nums text-muted-foreground"
+            >
+              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-muted-foreground/50" />
+              {stats}
+            </Badge>
           )}
+
           {onRefresh && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={onRefresh} className="h-9 w-9">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onRefresh}
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label="刷新"
+                >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>

@@ -52,16 +52,32 @@ export function SessionList({ sessions, backupIndex, overlay, currentProvider, .
     [filtered, backupIndex],
   );
 
-  return view === "time" ? (
+  if (view === "project") {
+    return (
+      <ProjectView
+        sessions={enriched}
+        handlers={h}
+        query={query}
+        overlay={overlay}
+        currentProvider={currentProvider}
+      />
+    );
+  }
+
+  if (view === "size") {
+    return (
+      <SizeView
+        sessions={enriched}
+        handlers={h}
+        query={query}
+        overlay={overlay}
+        currentProvider={currentProvider}
+      />
+    );
+  }
+
+  return (
     <TimeView
-      sessions={enriched}
-      handlers={h}
-      query={query}
-      overlay={overlay}
-      currentProvider={currentProvider}
-    />
-  ) : (
-    <ProjectView
       sessions={enriched}
       handlers={h}
       query={query}
@@ -106,7 +122,7 @@ function TimeView({
   }, [sessions]);
 
   return (
-    <div className="min-w-0 max-w-full space-y-4 overflow-hidden p-6">
+    <div className="min-w-0 max-w-full space-y-5 overflow-hidden px-6 py-5">
       {groups.map((g) => (
         <Collapsible
           key={g.key}
@@ -117,18 +133,23 @@ function TimeView({
           className="min-w-0"
         >
           <CollapsibleTrigger asChild>
-            <button className="group flex w-full items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-muted/50">
+            <button className="group flex w-full items-center gap-2.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40">
               <ChevronDown
                 className={cn(
-                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                  "h-3.5 w-3.5 shrink-0 text-muted-foreground/80 transition-transform duration-200 group-hover:text-foreground",
                   collapsed[g.key] && "-rotate-90",
                 )}
               />
-              <h2 className="text-sm font-semibold text-foreground">
+              <h2 className="text-[13px] font-semibold tracking-tight text-foreground">
                 {bucketLabel[g.key]}
               </h2>
-              <span className="text-xs text-muted-foreground">· {g.items.length}</span>
-              <div className="ml-2 h-px flex-1 bg-border" />
+              <span className="inline-flex h-5 min-w-[1.5rem] items-center justify-center rounded-md border border-border/60 bg-muted/40 px-1.5 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+                {g.items.length}
+              </span>
+              <div
+                aria-hidden="true"
+                className="ml-1 h-px flex-1 bg-gradient-to-r from-border via-border/60 to-transparent"
+              />
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent className="data-[state=open]:animate-accordion-down data-[state=closed]:animate-accordion-up overflow-hidden">
@@ -183,7 +204,7 @@ function ProjectView({
   }, [sessions]);
 
   return (
-    <div className="min-w-0 max-w-full space-y-3 overflow-hidden p-6">
+    <div className="min-w-0 max-w-full space-y-3 overflow-hidden px-6 py-5">
       {groups.map((g) => (
         <ProjectGroupView
           key={g.cwd}
@@ -198,4 +219,53 @@ function ProjectView({
       ))}
     </div>
   );
+}
+
+function SizeView({
+  sessions,
+  handlers,
+  query,
+  overlay,
+  currentProvider,
+}: {
+  sessions: SessionSummary[];
+  handlers: Handlers;
+  query: string;
+  overlay?: Map<string, FamilyOverlay>;
+  currentProvider?: string | null;
+}) {
+  const selected = useSelection((s) => s.selected);
+  const toggle = useSelection((s) => s.toggle);
+
+  const sorted = useMemo(
+    () => [...sessions].sort(compareSessionSizeAsc),
+    [sessions],
+  );
+
+  return (
+    <div className="min-w-0 max-w-full space-y-3 overflow-hidden px-6 py-5">
+      {sorted.map((s) => (
+        <SessionCard
+          key={s.id}
+          s={s}
+          selected={selected.has(s.id)}
+          onToggleSelect={toggle}
+          query={query}
+          overlay={overlay?.get(s.id)}
+          currentProvider={currentProvider}
+          {...handlers}
+        />
+      ))}
+    </div>
+  );
+}
+
+function compareSessionSizeAsc(a: SessionSummary, b: SessionSummary): number {
+  const tokenDelta = a.tokens_used - b.tokens_used;
+  if (tokenDelta !== 0) return tokenDelta;
+  const bytesDelta = a.rollout_bytes - b.rollout_bytes;
+  if (bytesDelta !== 0) return bytesDelta;
+  const updatedDelta = b.updated_at - a.updated_at;
+  if (updatedDelta !== 0) return updatedDelta;
+  return a.id.localeCompare(b.id);
 }

@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { api, type PreviewEvent, type SessionSummary } from "@/lib/api";
 import { formatTimeString, humanTokens } from "@/lib/format";
 import { parseEmbeddedTranscriptPrompt, type EmbeddedTranscriptPrompt } from "@/lib/sessionText";
@@ -82,7 +83,7 @@ export function PreviewDialog({
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [filter, setFilter] = useState("");
-  const [onlyMsg, setOnlyMsg] = useState(false);
+  const [onlyMsg, setOnlyMsg] = useState(true);
   const [forkTarget, setForkTarget] = useState<PreviewEvent | null>(null);
   const [forking, setForking] = useState(false);
   const offsetRef = useRef(0);
@@ -121,7 +122,7 @@ export function PreviewDialog({
     doneRef.current = false;
     loadingRef.current = false;
     setFilter("");
-    setOnlyMsg(false);
+    setOnlyMsg(true);
     offsetRef.current = 0;
     void loadMore();
   }, [open, rolloutPath, loadMore]);
@@ -162,6 +163,16 @@ export function PreviewDialog({
       toast.success(`已复制：${text}`);
     } catch (e: any) {
       toast.error("复制失败：" + String(e?.message ?? e));
+    }
+  };
+
+  const copySessionId = async () => {
+    if (!session) return;
+    try {
+      await navigator.clipboard.writeText(session.id);
+      toast.success(`已复制会话 ID：${session.id}`);
+    } catch (e: any) {
+      toast.error("复制会话 ID 失败：" + String(e?.message ?? e));
     }
   };
 
@@ -214,21 +225,21 @@ export function PreviewDialog({
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[90vh] max-w-[96vw] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
-        <DialogHeader className="min-w-0 border-b px-6 py-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-              <Sparkles className="h-5 w-5 text-muted-foreground" />
+        <DialogHeader className="relative min-w-0 border-b border-border/60 px-6 pb-3.5 pt-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-gradient-to-r after:from-transparent after:via-border/50 after:to-transparent">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-muted to-muted/40 shadow-sm">
+              <Sparkles className="h-[18px] w-[18px] text-muted-foreground" />
             </div>
             <div className="min-w-0 flex-1">
-              <DialogTitle className="truncate text-base">
+              <DialogTitle className="truncate text-[15px] font-semibold tracking-tight">
                 {session?.title || "预览会话"}
               </DialogTitle>
               {session && (
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-mono">{session.id.slice(0, 8)}</span>
+                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span className="font-mono text-foreground/70">{session.id.slice(0, 8)}</span>
                   {session.model && (
                     <>
-                      <span>·</span>
+                      <Dot />
                       <Badge variant="secondary" className="h-5 px-1.5 font-normal">
                         {session.model}
                         {session.reasoning_effort ? ` · ${session.reasoning_effort}` : ""}
@@ -237,7 +248,7 @@ export function PreviewDialog({
                   )}
                   {session.tokens_used > 0 && (
                     <>
-                      <span>·</span>
+                      <Dot />
                       <span className="tabular-nums">
                         {humanTokens(session.tokens_used)} token
                       </span>
@@ -245,8 +256,8 @@ export function PreviewDialog({
                   )}
                   {session.cwd_display && (
                     <>
-                      <span>·</span>
-                      <span className="truncate" title={session.cwd}>
+                      <Dot />
+                      <span className="min-w-0 truncate" title={session.cwd}>
                         {session.cwd_display}
                       </span>
                     </>
@@ -256,37 +267,49 @@ export function PreviewDialog({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="mt-3.5 flex flex-wrap items-center gap-2">
             <Input
               placeholder="在事件中过滤…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="h-8 w-64"
+              className="h-8 w-64 border-border/70"
             />
-            <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1">
+            <label
+              htmlFor="only-msg"
+              className="group flex h-8 cursor-pointer items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 transition-colors hover:bg-muted/50"
+            >
               <Switch id="only-msg" checked={onlyMsg} onCheckedChange={setOnlyMsg} />
               <Label htmlFor="only-msg" className="cursor-pointer text-xs">
                 仅看对话消息
               </Label>
-            </div>
-            <span className="text-xs text-muted-foreground">
-              显示 {filtered.length} / 已加载 {events.length} 条事件
-              {!done ? "，滚动或点底部继续加载" : "，已到末尾"}
+            </label>
+            <span className="text-[11px] text-muted-foreground">
+              显示 <span className="tabular-nums text-foreground/80">{filtered.length}</span>
+              <span className="mx-1 text-muted-foreground/50">/</span>
+              已加载 <span className="tabular-nums text-foreground/80">{events.length}</span> 条
+              <span className="ml-1 text-muted-foreground/70">
+                {!done ? "· 滚动加载更多" : "· 已到末尾"}
+              </span>
             </span>
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex items-center gap-0.5">
               {session && (
                 <>
-                  <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={copyResume}>
+                  <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2.5" onClick={copySessionId}>
+                    <Copy className="h-3.5 w-3.5" />
+                    复制会话 ID
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2.5" onClick={copyResume}>
                     <Copy className="h-3.5 w-3.5" />
                     复制 resume
                   </Button>
-                  <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={reveal}>
+                  <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2.5" onClick={reveal}>
                     <FolderOpen className="h-3.5 w-3.5" />
                     打开目录
                   </Button>
+                  <Separator orientation="vertical" className="mx-1 h-4 bg-border/60" />
                 </>
               )}
-              <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={copyPath}>
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2.5" onClick={copyPath}>
                 <FileJson className="h-3.5 w-3.5" />
                 复制路径
               </Button>
@@ -462,10 +485,10 @@ function UserBubble({ e, ts, forkAction }: { e: PreviewEvent; ts: string; forkAc
     <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ForkNodeButton event={e} action={forkAction} />
           <span>你</span>
           <EventSourceBadge e={e} />
           {ts && <span className="font-mono">· {ts}</span>}
-          <ForkNodeButton event={e} action={forkAction} />
         </div>
         <div className="chat-md max-w-full rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-primary-foreground">
           {text ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown> : (
@@ -494,10 +517,10 @@ function EmbeddedTranscriptBubble({
     <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ForkNodeButton event={e} action={forkAction} />
           <span>你</span>
           <EventSourceBadge e={e} />
           {ts && <span className="font-mono">· {ts}</span>}
-          <ForkNodeButton event={e} action={forkAction} />
         </div>
 
         <div className="flex w-full flex-col items-end gap-2">
@@ -550,10 +573,10 @@ function DiffCommentBubble({
     <div className="group flex justify-end gap-3">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end overflow-hidden">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ForkNodeButton event={e} action={forkAction} />
           <span>你</span>
           <EventSourceBadge e={e} />
           {ts && <span className="font-mono">· {ts}</span>}
-          <ForkNodeButton event={e} action={forkAction} />
         </div>
 
         <div className="flex w-full flex-col items-end gap-2">
@@ -774,6 +797,15 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
   );
 }
 
+function Dot() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40"
+    />
+  );
+}
+
 function EventSourceBadge({ e }: { e: PreviewEvent }) {
   const outer = rawType(e);
   const payload = payloadType(e);
@@ -930,14 +962,14 @@ function cleanDiffCommentText(text: string): string {
 }
 
 function isConversationMessage(e: PreviewEvent): boolean {
-  if (isEventMessage(e)) return true;
+  if (isInternalCodexContextMessage(e)) return false;
   const raw = e.raw as { message?: { role?: unknown } } | null;
   if (typeof raw?.message?.role === "string") {
     return e.role === "user" || e.role === "assistant";
   }
-  return rawType(e) === "response_item" && payloadType(e) === "message" && (
-    e.role === "user" || e.role === "assistant"
-  );
+  if (rawType(e) !== "response_item" || payloadType(e) !== "message") return false;
+  if (e.role !== "user" && e.role !== "assistant") return false;
+  return true;
 }
 
 function isEventMessage(e: PreviewEvent): boolean {
@@ -955,6 +987,24 @@ function eventMessageLabel(e: PreviewEvent): string {
   if (payload === "user_message") return "用户事件消息";
   if (payload === "agent_message") return "agent事件消息";
   return "事件消息";
+}
+
+function isInternalCodexContextMessage(e: PreviewEvent): boolean {
+  if (e.role !== "user") return false;
+  const text = extractText(e).trim();
+  if (!text) return false;
+  const firstLine = normalizePromptHeading(text.split(/\r?\n/, 1)[0] ?? "");
+  if (firstLine.startsWith("AGENTS.md instructions for ") && text.includes("<INSTRUCTIONS>")) {
+    return true;
+  }
+  if (firstLine === "<environment_context>" && text.includes("</environment_context>")) {
+    return true;
+  }
+  return false;
+}
+
+function normalizePromptHeading(line: string): string {
+  return line.trim().replace(/^#{1,6}\s+/, "").trim();
 }
 
 function rawType(e: PreviewEvent): string {
