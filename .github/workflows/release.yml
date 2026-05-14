@@ -93,15 +93,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
-            This release improves session filtering, preview accuracy, and CLI cleanup workflows.
+            This release adds theme switching and smooths out light/dark mode changes.
 
             Changes:
-            - Added size sorting for desktop and CLI session lists, ordered from low token usage to high token usage.
-            - Defaulted previews to conversation-only messages and filtered Codex internal context such as AGENTS.md instructions and environment metadata.
-            - Added a preview action to copy the session ID directly.
-            - Improved preview layout so the user-message rewind action no longer reserves blank space on the far right.
-            - Added CLI menu support for selecting multiple sessions and deleting the selected sessions after explicit confirmation.
-            - Updated README CLI guidance to recommend the interactive menu first and document the new sorting, preview, and multi-select controls.
+            - Added a sidebar theme control for light, dark, and system modes.
+            - Persisted the selected theme and applied it before the app renders to avoid first-paint mismatch.
+            - Added a keyboard shortcut for quick theme toggling.
+            - Tuned the dark theme palette and sidebar styling for the new theme modes.
+            - Fixed delayed partial color changes during theme switching by temporarily removing color-related transitions.
 
             Assets include desktop packages and platform-specific cc-sessions CLI packages.
           releaseDraft: false

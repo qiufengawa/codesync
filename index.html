@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CC Sessions</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("cc-sessions:theme");
+          var mode = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+          var resolved =
+            mode === "system"
+              ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : mode;
+          var root = document.documentElement;
+          if (resolved === "dark") root.classList.add("dark");
+          root.style.colorScheme = resolved;
+          root.dataset.theme = resolved;
+        } catch (_) {
+          /* noop */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

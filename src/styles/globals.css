@@ -40,38 +40,38 @@
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 142.1 70.6% 45.3%;
-    --primary-foreground: 144.9 80.4% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 240 8% 6.5%;
+    --foreground: 0 0% 95%;
+    --card: 240 8% 8.2%;
+    --card-foreground: 0 0% 95%;
+    --popover: 240 9% 7.5%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 142.1 70.6% 48%;
+    --primary-foreground: 144.9 80.4% 8%;
+    --secondary: 240 5% 14.5%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 240 5% 13%;
+    --muted-foreground: 240 5% 66%;
+    --accent: 240 5% 16%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 70% 48%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 142.1 70.6% 45.3%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 142.1 70.6% 45.3%;
-    --sidebar-primary-foreground: 144.9 80.4% 10%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
+    --border: 240 4.5% 16.5%;
+    --input: 240 4.5% 16.5%;
+    --ring: 142.1 70.6% 48%;
+    --sidebar-background: 240 8% 5.5%;
+    --sidebar-foreground: 240 5% 92%;
+    --sidebar-primary: 142.1 70.6% 48%;
+    --sidebar-primary-foreground: 144.9 80.4% 8%;
+    --sidebar-accent: 240 5% 14%;
+    --sidebar-accent-foreground: 240 5% 95%;
+    --sidebar-border: 240 4.5% 14.5%;
     --sidebar-ring: 217.2 91.2% 59.8%;
-    --chart-1: 142.1 70.6% 45.3%;
-    --chart-2: 173.4 80.4% 40%;
-    --chart-3: 43.3 96.4% 56.3%;
-    --chart-4: 262.1 83.3% 57.8%;
-    --chart-5: 346.8 77.2% 49.8%;
+    --chart-1: 142.1 70.6% 50%;
+    --chart-2: 173.4 70% 45%;
+    --chart-3: 43.3 92% 60%;
+    --chart-4: 262.1 75% 65%;
+    --chart-5: 346.8 70% 55%;
   }
 }
 
@@ -87,6 +87,65 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* 主题切换时短暂移除颜色过渡，避免不同组件的颜色变量分批完成切换。 */
+  html.theme-switching,
+  html.theme-switching *,
+  html.theme-switching *::before,
+  html.theme-switching *::after {
+    transition-property: transform, opacity, width, height, margin, padding !important;
+  }
+}
+
+@layer utilities {
+  @keyframes sun-rays-spin {
+    0% {
+      transform: rotate(0deg);
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 0.55;
+    }
+    100% {
+      transform: rotate(360deg);
+      opacity: 0.35;
+    }
+  }
+
+  .animate-sun-rays {
+    background-image: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      hsl(45 100% 60% / 0.6) 12deg,
+      transparent 24deg,
+      transparent 78deg,
+      hsl(45 100% 60% / 0.6) 90deg,
+      transparent 102deg,
+      transparent 168deg,
+      hsl(45 100% 60% / 0.6) 180deg,
+      transparent 192deg,
+      transparent 258deg,
+      hsl(45 100% 60% / 0.6) 270deg,
+      transparent 282deg,
+      transparent 360deg
+    );
+    -webkit-mask-image: radial-gradient(
+      circle,
+      transparent 38%,
+      black 42%,
+      black 62%,
+      transparent 66%
+    );
+    mask-image: radial-gradient(
+      circle,
+      transparent 38%,
+      black 42%,
+      black 62%,
+      transparent 66%
+    );
+    border-radius: 9999px;
+    animation: sun-rays-spin 9s linear infinite;
   }
 }
 

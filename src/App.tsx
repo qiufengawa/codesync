@@ -4,7 +4,9 @@ import { Toaster } from "sonner";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Sidebar } from "@/components/Sidebar";
+import { useHotkeys } from "@/hooks/useHotkeys";
 import { useSettings } from "@/stores/settings";
+import { useTheme } from "@/stores/theme";
 
 const SessionsRoute = lazy(() => import("@/routes/sessions"));
 const BackupsRoute = lazy(() => import("@/routes/backups"));
@@ -16,10 +18,26 @@ const TransferRoute = lazy(() => import("@/routes/transfer"));
 export default function App() {
   const load = useSettings((s) => s.load);
   const settings = useSettings((s) => s.settings);
+  const initTheme = useTheme((s) => s.init);
+  const toggleTheme = useTheme((s) => s.toggle);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return initTheme();
+  }, [initTheme]);
+
+  useHotkeys([
+    {
+      combo: "mod+shift+l",
+      handler: (e) => {
+        e.preventDefault();
+        toggleTheme();
+      },
+    },
+  ]);
 
   return (
     <SidebarProvider

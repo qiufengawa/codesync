@@ -20,6 +20,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { SettingsSheet } from "@/components/SettingsSheet";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useSettings } from "@/stores/settings";
 import { cn } from "@/lib/utils";
 
@@ -122,18 +123,21 @@ export function Sidebar() {
         {settings?.claude_dir && (
           <DirCard label="Claude 目录" path={settings.claude_dir} accent="claude" />
         )}
-        <SettingsSheet
-          trigger={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="group/settings mt-0.5 h-8 w-full justify-start gap-2 px-2.5 text-[13px] font-medium text-muted-foreground hover:text-foreground"
-            >
-              <Settings className="h-4 w-4 transition-transform duration-500 ease-out group-hover/settings:rotate-90" />
-              设置
-            </Button>
-          }
-        />
+        <div className="mt-0.5 flex items-center gap-1">
+          <ThemeToggle className="flex-1" />
+          <SettingsSheet
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="设置"
+                className="group/settings h-9 w-9 shrink-0 rounded-lg border border-border/70 bg-muted/40 text-muted-foreground shadow-[inset_0_1px_0_0_hsl(var(--background)/0.6)] hover:border-border hover:bg-muted/60 hover:text-foreground dark:bg-muted/30 dark:shadow-[inset_0_1px_0_0_hsl(var(--background)/0.2)]"
+              >
+                <Settings className="h-4 w-4 transition-transform duration-500 ease-out group-hover/settings:rotate-90" />
+              </Button>
+            }
+          />
+        </div>
       </SidebarFooter>
     </SidebarPrimitive>
   );
