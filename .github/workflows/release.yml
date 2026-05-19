@@ -93,14 +93,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
-            This release adds theme switching and smooths out light/dark mode changes.
+            This release adds keyboard scrolling support to the session preview dialog.
 
             Changes:
-            - Added a sidebar theme control for light, dark, and system modes.
-            - Persisted the selected theme and applied it before the app renders to avoid first-paint mismatch.
-            - Added a keyboard shortcut for quick theme toggling.
-            - Tuned the dark theme palette and sidebar styling for the new theme modes.
-            - Fixed delayed partial color changes during theme switching by temporarily removing color-related transitions.
+            - Added Home, End, Page Up, and Page Down support inside the session preview dialog.
+            - Kept preview scrolling shortcuts scoped to the preview dialog so global shortcuts still ignore dialogs.
+            - Preserved text editing behavior by ignoring these shortcuts while the preview filter input is focused.
+            - Documented the app shortcuts in README.
 
             Assets include desktop packages and platform-specific cc-sessions CLI packages.
           releaseDraft: false
