@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Bot,
   ChevronDown,
@@ -37,6 +37,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { api, type PreviewEvent, type SessionSummary } from "@/lib/api";
 import { formatTimeString, humanTokens } from "@/lib/format";
+import { shouldIgnoreTextEditingHotkey } from "@/lib/keyboard";
 import { parseEmbeddedTranscriptPrompt, type EmbeddedTranscriptPrompt } from "@/lib/sessionText";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -156,6 +157,61 @@ export function PreviewDialog({
     }
   };
 
+  const onPreviewKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (shouldIgnoreTextEditingHotkey(e.target)) return;
+
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+
+      const maxScrollTop = Math.max(viewport.scrollHeight - viewport.clientHeight, 0);
+      const pageDelta = Math.max(Math.floor(viewport.clientHeight * 0.9), 120);
+      let nextScrollTop: number | null = null;
+      let keepAtBottomAfterLoad = false;
+
+      switch (e.key) {
+        case "Home":
+          nextScrollTop = 0;
+          break;
+        case "End":
+          nextScrollTop = maxScrollTop;
+          keepAtBottomAfterLoad = true;
+          break;
+        case "PageUp":
+          nextScrollTop = viewport.scrollTop - pageDelta;
+          break;
+        case "PageDown":
+          nextScrollTop = viewport.scrollTop + pageDelta;
+          break;
+        default:
+          return;
+      }
+
+      e.preventDefault();
+
+      const clampedScrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop));
+      viewport.scrollTo({ top: clampedScrollTop });
+
+      if (keepAtBottomAfterLoad) {
+        void loadMore().then(() => {
+          requestAnimationFrame(() => {
+            const nextViewport = viewportRef.current;
+            if (!nextViewport) return;
+            nextViewport.scrollTo({
+              top: Math.max(nextViewport.scrollHeight - nextViewport.clientHeight, 0),
+            });
+          });
+        });
+        return;
+      }
+
+      if (maxScrollTop - clampedScrollTop < 200) {
+        void loadMore();
+      }
+    },
+    [loadMore],
+  );
+
   const copyResume = async () => {
     if (!session) return;
     try {
@@ -224,7 +280,10 @@ export function PreviewDialog({
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[90vh] max-w-[96vw] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
+      <DialogContent
+        className="flex h-[90vh] max-w-[96vw] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]"
+        onKeyDown={onPreviewKeyDown}
+      >
         <DialogHeader className="relative min-w-0 border-b border-border/60 px-6 pb-3.5 pt-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-gradient-to-r after:from-transparent after:via-border/50 after:to-transparent">
           <div className="flex items-start gap-3.5">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-muted to-muted/40 shadow-sm">
