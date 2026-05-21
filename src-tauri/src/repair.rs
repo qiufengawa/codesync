@@ -18,7 +18,8 @@ use crate::family;
 use crate::models::{
     BranchStatus, BranchSyncReport, BranchSyncState, CloneReport, DiagnosticReport, Family,
     FamilyBranch, ForkSessionReport, HistoryOrphanReport, HistoryPruneReport, IndexRepairReport,
-    OrphanPruneReport, ProviderInfo, SwitchStrategy, SyncBranchReport, ThreadsRebuildReport,
+    OrphanPruneReport, ProjectConfigIssue, ProjectConfigRepairItem, ProjectConfigRepairReport,
+    ProjectConfigReport, ProviderInfo, SwitchStrategy, SyncBranchReport, ThreadsRebuildReport,
 };
 
 /// Codex CLI 的内建默认 provider（与官方文档一致）。
@@ -84,6 +85,439 @@ pub fn get_provider_info(codex_dir: String) -> AppResult<ProviderInfo> {
         config_path: cfg.to_string_lossy().into_owned(),
         exists,
     })
+}
+
+// ========================= 项目级 Codex 配置诊断 =========================
+
+const PROJECT_CODEX_CONFIG_RELPATH: [&str; 2] = [".codex", "config.toml"];
+const MULTI_AGENT_V2_SECTION: &str = "features.multi_agent_v2";
+const DEFAULT_WAIT_TIMEOUT_KEY: &str = "default_wait_timeout_ms";
+const MIN_WAIT_TIMEOUT_KEY: &str = "min_wait_timeout_ms";
+const MAX_WAIT_TIMEOUT_KEY: &str = "max_wait_timeout_ms";
+
+#[derive(Debug, Clone)]
+struct ProjectConfigCandidate {
+    project_cwd: PathBuf,
+    config_path: PathBuf,
+    session_ids: BTreeSet<String>,
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn diagnose_project_configs(codex_dir: String) -> AppResult<ProjectConfigReport> {
+    let codex = PathBuf::from(&codex_dir);
+    let (scanned_projects, candidates) = collect_project_config_candidates(&codex)?;
+    let mut issues = Vec::new();
+
+    for candidate in candidates.values() {
+        match diagnose_project_config_candidate(candidate) {
+            Ok(Some(issue)) => issues.push(issue),
+            Ok(None) => {}
+            Err(err) => issues.push(project_config_issue(
+                candidate,
+                None,
+                None,
+                None,
+                None,
+                false,
+                format!("读取或解析项目 config.toml 失败：{err}"),
+            )),
+        }
+    }
+
+    let repairable_count = issues.iter().filter(|issue| issue.repairable).count() as u32;
+    Ok(ProjectConfigReport {
+        scanned_projects,
+        config_files: candidates.len() as u32,
+        issue_count: issues.len() as u32,
+        repairable_count,
+        issues,
+    })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn repair_project_configs(
+    codex_dir: String,
+    dry_run: bool,
+) -> AppResult<ProjectConfigRepairReport> {
+    let report = diagnose_project_configs(codex_dir)?;
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+
+    for issue in report.issues.iter().filter(|issue| issue.repairable) {
+        let Some(next_default) = issue.suggested_default_wait_timeout_ms else {
+            errors.push(format!(
+                "{}: repairable=true 但缺少建议 default_wait_timeout_ms",
+                issue.config_path
+            ));
+            continue;
+        };
+        let changed = if dry_run {
+            issue.current_default_wait_timeout_ms != Some(next_default)
+        } else {
+            match upsert_project_default_wait_timeout(Path::new(&issue.config_path), next_default) {
+                Ok(changed) => changed,
+                Err(err) => {
+                    errors.push(format!("{}: {err}", issue.config_path));
+                    continue;
+                }
+            }
+        };
+        items.push(ProjectConfigRepairItem {
+            project_cwd: issue.project_cwd.clone(),
+            config_path: issue.config_path.clone(),
+            changed,
+            dry_run,
+            old_default_wait_timeout_ms: issue.current_default_wait_timeout_ms,
+            new_default_wait_timeout_ms: next_default,
+        });
+    }
+
+    let repaired_count = items.iter().filter(|item| item.changed).count() as u32;
+    Ok(ProjectConfigRepairReport {
+        scanned_projects: report.scanned_projects,
+        config_files: report.config_files,
+        issue_count: report.issue_count,
+        repaired_count,
+        dry_run,
+        items,
+        errors,
+    })
+}
+
+fn collect_project_config_candidates(
+    codex: &Path,
+) -> AppResult<(u32, BTreeMap<PathBuf, ProjectConfigCandidate>)> {
+    let mut projects: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut candidates: BTreeMap<PathBuf, ProjectConfigCandidate> = BTreeMap::new();
+
+    for rollout_path in family::scan_rollouts(codex) {
+        let Some(brief) = read_rollout_brief(codex, &rollout_path)? else {
+            continue;
+        };
+        let Some(cwd) = brief.cwd.as_deref().map(normalize_project_cwd) else {
+            continue;
+        };
+        if cwd.as_os_str().is_empty() {
+            continue;
+        }
+
+        projects.insert(cwd.clone());
+        let config_path = cwd
+            .join(PROJECT_CODEX_CONFIG_RELPATH[0])
+            .join(PROJECT_CODEX_CONFIG_RELPATH[1]);
+        if !config_path.is_file() {
+            continue;
+        }
+
+        candidates
+            .entry(config_path.clone())
+            .and_modify(|candidate| {
+                candidate.session_ids.insert(brief.id.clone());
+            })
+            .or_insert_with(|| {
+                let mut session_ids = BTreeSet::new();
+                session_ids.insert(brief.id);
+                ProjectConfigCandidate {
+                    project_cwd: cwd,
+                    config_path,
+                    session_ids,
+                }
+            });
+    }
+
+    Ok((projects.len() as u32, candidates))
+}
+
+fn normalize_project_cwd(raw: &str) -> PathBuf {
+    PathBuf::from(paths::strip_verbatim(raw.trim()))
+}
+
+fn diagnose_project_config_candidate(
+    candidate: &ProjectConfigCandidate,
+) -> AppResult<Option<ProjectConfigIssue>> {
+    let raw = fs::read_to_string(&candidate.config_path)?;
+    let parsed = raw.parse::<toml::Value>().map_err(|err| {
+        AppError::Other(format!(
+            "config.toml 不是有效 TOML，Codex 恢复会话会直接失败：{err}"
+        ))
+    })?;
+
+    let Some(table) = parsed.as_table() else {
+        return Ok(Some(project_config_issue(
+            candidate,
+            None,
+            None,
+            None,
+            None,
+            false,
+            "config.toml 顶层不是 TOML 表，Codex 无法按配置文件读取".to_string(),
+        )));
+    };
+    let Some(features) = table.get("features").and_then(|v| v.as_table()) else {
+        return Ok(None);
+    };
+    let Some(multi_agent) = features.get("multi_agent_v2").and_then(|v| v.as_table()) else {
+        return Ok(None);
+    };
+
+    let min_wait = read_timeout_value(multi_agent, MIN_WAIT_TIMEOUT_KEY).map_err(|msg| {
+        AppError::Other(format!(
+            "features.multi_agent_v2.{MIN_WAIT_TIMEOUT_KEY}: {msg}"
+        ))
+    })?;
+    let default_wait =
+        read_timeout_value(multi_agent, DEFAULT_WAIT_TIMEOUT_KEY).map_err(|msg| {
+            AppError::Other(format!(
+                "features.multi_agent_v2.{DEFAULT_WAIT_TIMEOUT_KEY}: {msg}"
+            ))
+        })?;
+    let max_wait = read_timeout_value(multi_agent, MAX_WAIT_TIMEOUT_KEY).map_err(|msg| {
+        AppError::Other(format!(
+            "features.multi_agent_v2.{MAX_WAIT_TIMEOUT_KEY}: {msg}"
+        ))
+    })?;
+
+    if let (Some(min), Some(max)) = (min_wait, max_wait) {
+        if min > max {
+            return Ok(Some(project_config_issue(
+                candidate,
+                min_wait,
+                default_wait,
+                max_wait,
+                None,
+                false,
+                format!(
+                    "{MIN_WAIT_TIMEOUT_KEY}={min} 大于 {MAX_WAIT_TIMEOUT_KEY}={max}，需要人工决定修改哪个边界值"
+                ),
+            )));
+        }
+    }
+
+    let suggestion = suggested_default_wait_timeout(min_wait, default_wait, max_wait);
+    let Some(next_default) = suggestion else {
+        return Ok(None);
+    };
+
+    if let Some(max) = max_wait {
+        if next_default > max {
+            return Ok(Some(project_config_issue(
+                candidate,
+                min_wait,
+                default_wait,
+                max_wait,
+                None,
+                false,
+                format!(
+                    "建议 default_wait_timeout_ms={next_default} 会超过 {MAX_WAIT_TIMEOUT_KEY}={max}，需要人工调整边界值"
+                ),
+            )));
+        }
+    }
+
+    let message = project_config_issue_message(min_wait, default_wait, max_wait, next_default);
+    Ok(Some(project_config_issue(
+        candidate,
+        min_wait,
+        default_wait,
+        max_wait,
+        Some(next_default),
+        true,
+        message,
+    )))
+}
+
+fn read_timeout_value(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let Some(n) = value.as_integer() else {
+        return Err("必须是非负整数毫秒值".to_string());
+    };
+    if n < 0 {
+        return Err("不能是负数".to_string());
+    }
+    Ok(Some(n as u64))
+}
+
+fn suggested_default_wait_timeout(
+    min_wait: Option<u64>,
+    default_wait: Option<u64>,
+    max_wait: Option<u64>,
+) -> Option<u64> {
+    match default_wait {
+        Some(default) => {
+            if let Some(min) = min_wait {
+                if default < min {
+                    return Some(min);
+                }
+            }
+            if let Some(max) = max_wait {
+                if default > max {
+                    return Some(max);
+                }
+            }
+            None
+        }
+        None => min_wait.or(max_wait),
+    }
+}
+
+fn project_config_issue_message(
+    min_wait: Option<u64>,
+    default_wait: Option<u64>,
+    max_wait: Option<u64>,
+    next_default: u64,
+) -> String {
+    match default_wait {
+        None => {
+            if min_wait.is_some() && max_wait.is_some() {
+                format!(
+                    "{MIN_WAIT_TIMEOUT_KEY} 或 {MAX_WAIT_TIMEOUT_KEY} 已显式设置，但缺少 {DEFAULT_WAIT_TIMEOUT_KEY}；将补为 {next_default}"
+                )
+            } else if min_wait.is_some() {
+                format!(
+                    "{MIN_WAIT_TIMEOUT_KEY} 已显式设置，但缺少 {DEFAULT_WAIT_TIMEOUT_KEY}；新版 Codex 会用内置默认值参与校验，可能小于最小值。将补为 {next_default}"
+                )
+            } else {
+                format!(
+                    "{MAX_WAIT_TIMEOUT_KEY} 已显式设置，但缺少 {DEFAULT_WAIT_TIMEOUT_KEY}；新版 Codex 会用内置默认值参与校验，可能大于最大值。将补为 {next_default}"
+                )
+            }
+        }
+        Some(default) if min_wait.is_some_and(|min| default < min) => format!(
+            "{DEFAULT_WAIT_TIMEOUT_KEY}={default} 小于 {MIN_WAIT_TIMEOUT_KEY}={}；将改为 {next_default}",
+            min_wait.unwrap()
+        ),
+        Some(default) if max_wait.is_some_and(|max| default > max) => format!(
+            "{DEFAULT_WAIT_TIMEOUT_KEY}={default} 大于 {MAX_WAIT_TIMEOUT_KEY}={}；将改为 {next_default}",
+            max_wait.unwrap()
+        ),
+        _ => format!("{DEFAULT_WAIT_TIMEOUT_KEY} 将改为 {next_default}"),
+    }
+}
+
+fn project_config_issue(
+    candidate: &ProjectConfigCandidate,
+    min_wait: Option<u64>,
+    default_wait: Option<u64>,
+    max_wait: Option<u64>,
+    suggested_default: Option<u64>,
+    repairable: bool,
+    message: String,
+) -> ProjectConfigIssue {
+    let session_ids: Vec<String> = candidate.session_ids.iter().cloned().collect();
+    ProjectConfigIssue {
+        project_cwd: candidate.project_cwd.to_string_lossy().into_owned(),
+        config_path: candidate.config_path.to_string_lossy().into_owned(),
+        session_count: session_ids.len() as u32,
+        session_ids,
+        current_min_wait_timeout_ms: min_wait,
+        current_default_wait_timeout_ms: default_wait,
+        current_max_wait_timeout_ms: max_wait,
+        suggested_default_wait_timeout_ms: suggested_default,
+        repairable,
+        message,
+    }
+}
+
+fn upsert_project_default_wait_timeout(config_path: &Path, value: u64) -> AppResult<bool> {
+    let raw = fs::read_to_string(config_path)?;
+    raw.parse::<toml::Value>()
+        .map_err(|err| AppError::Other(format!("config.toml 不是有效 TOML：{err}")))?;
+
+    let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let had_final_newline = raw.ends_with('\n');
+    let mut lines: Vec<String> = raw.lines().map(str::to_string).collect();
+    let Some((section_start, section_end)) =
+        find_toml_section_range(&lines, MULTI_AGENT_V2_SECTION)
+    else {
+        return Err(AppError::Other(format!(
+            "未找到 [{MULTI_AGENT_V2_SECTION}] 配置段"
+        )));
+    };
+
+    for line in lines.iter_mut().take(section_end).skip(section_start + 1) {
+        if is_toml_key_assignment(line, DEFAULT_WAIT_TIMEOUT_KEY) {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            let next_line = format!("{indent}{DEFAULT_WAIT_TIMEOUT_KEY} = {value}");
+            if *line == next_line {
+                return Ok(false);
+            }
+            *line = next_line;
+            return write_valid_project_config(config_path, raw, lines, newline, had_final_newline);
+        }
+    }
+
+    let insert_after =
+        find_key_line_in_range(&lines, section_start + 1, section_end, MIN_WAIT_TIMEOUT_KEY)
+            .or_else(|| {
+                find_key_line_in_range(&lines, section_start + 1, section_end, MAX_WAIT_TIMEOUT_KEY)
+            })
+            .unwrap_or(section_start);
+    lines.insert(
+        insert_after + 1,
+        format!("{DEFAULT_WAIT_TIMEOUT_KEY} = {value}"),
+    );
+    write_valid_project_config(config_path, raw, lines, newline, had_final_newline)
+}
+
+fn write_valid_project_config(
+    config_path: &Path,
+    old_raw: String,
+    lines: Vec<String>,
+    newline: &str,
+    final_newline: bool,
+) -> AppResult<bool> {
+    let mut next_raw = lines.join(newline);
+    if final_newline {
+        next_raw.push_str(newline);
+    }
+    next_raw
+        .parse::<toml::Value>()
+        .map_err(|err| AppError::Other(format!("修改后的 config.toml 不是有效 TOML：{err}")))?;
+    if next_raw == old_raw {
+        return Ok(false);
+    }
+    fs::write(config_path, next_raw)?;
+    Ok(true)
+}
+
+fn find_toml_section_range(lines: &[String], section: &str) -> Option<(usize, usize)> {
+    let header = format!("[{section}]");
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == header.as_str())?;
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(idx, line)| {
+            let trimmed = line.trim_start();
+            (trimmed.starts_with('[') && !trimmed.starts_with("[[")).then_some(idx)
+        })
+        .unwrap_or(lines.len());
+    Some((start, end))
+}
+
+fn find_key_line_in_range(lines: &[String], start: usize, end: usize, key: &str) -> Option<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(start)
+        .find_map(|(idx, line)| is_toml_key_assignment(line, key).then_some(idx))
+}
+
+fn is_toml_key_assignment(line: &str, key: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') || !trimmed.starts_with(key) {
+        return false;
+    }
+    let rest = &trimmed[key.len()..];
+    rest.trim_start().starts_with('=')
 }
 
 // ========================= 诊断 =========================
@@ -2808,6 +3242,23 @@ mod tests {
         write_rollout_in(codex, "sessions", id, provider)
     }
 
+    fn write_rollout_with_cwd(codex: &Path, id: &str, cwd: &Path) -> AppResult<()> {
+        let rollout_dir = codex.join("sessions").join("2026").join("04").join("22");
+        fs::create_dir_all(&rollout_dir)?;
+        let path = rollout_dir.join(format!("rollout-{}.jsonl", id));
+        let line = serde_json::json!({
+            "timestamp": "2026-04-22T00:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": id,
+                "model_provider": DEFAULT_PROVIDER,
+                "cwd": cwd.to_string_lossy()
+            }
+        });
+        fs::write(path, format!("{}\n", serde_json::to_string(&line)?))?;
+        Ok(())
+    }
+
     fn write_claude_session(claude: &Path, id: &str) -> AppResult<()> {
         let dir = claude.join("projects").join("sample-project");
         fs::create_dir_all(&dir)?;
@@ -3136,6 +3587,75 @@ mod tests {
 
         assert!(diag.orphan_in_threads.is_empty());
         assert_eq!(prune.threads_removed, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn project_config_diagnosis_repairs_missing_multi_agent_default() -> AppResult<()> {
+        let codex = temp_codex_dir("cc-session-manager-project-config-test");
+        let project = temp_codex_dir("cc-session-manager-project-config-worktree");
+        fs::create_dir_all(project.join(".codex"))?;
+        fs::write(
+            project.join(".codex").join("config.toml"),
+            "[features.multi_agent_v2]\n\
+             enabled = true\n\
+             max_concurrent_threads_per_session = 6\n\
+             min_wait_timeout_ms = 480000\n",
+        )?;
+        write_rollout_with_cwd(&codex, "project-config-session", &project)?;
+
+        let report = diagnose_project_configs(codex.to_string_lossy().into_owned())?;
+        assert_eq!(report.scanned_projects, 1);
+        assert_eq!(report.config_files, 1);
+        assert_eq!(report.issue_count, 1);
+        assert_eq!(report.repairable_count, 1);
+        assert_eq!(
+            report.issues[0].suggested_default_wait_timeout_ms,
+            Some(480000)
+        );
+
+        let preview = repair_project_configs(codex.to_string_lossy().into_owned(), true)?;
+        assert_eq!(preview.repaired_count, 1);
+        let raw_before = fs::read_to_string(project.join(".codex").join("config.toml"))?;
+        assert!(!raw_before.contains("default_wait_timeout_ms"));
+
+        let repaired = repair_project_configs(codex.to_string_lossy().into_owned(), false)?;
+        assert_eq!(repaired.repaired_count, 1);
+        let raw_after = fs::read_to_string(project.join(".codex").join("config.toml"))?;
+        assert!(raw_after.contains("default_wait_timeout_ms = 480000"));
+
+        let clean = diagnose_project_configs(codex.to_string_lossy().into_owned())?;
+        assert_eq!(clean.issue_count, 0);
+
+        fs::remove_dir_all(&codex).ok();
+        fs::remove_dir_all(&project).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn project_config_diagnosis_refuses_to_guess_invalid_timeout_bounds() -> AppResult<()> {
+        let codex = temp_codex_dir("cc-session-manager-project-config-bounds-test");
+        let project = temp_codex_dir("cc-session-manager-project-config-bounds-worktree");
+        fs::create_dir_all(project.join(".codex"))?;
+        fs::write(
+            project.join(".codex").join("config.toml"),
+            "[features.multi_agent_v2]\n\
+             min_wait_timeout_ms = 480000\n\
+             max_wait_timeout_ms = 1000\n",
+        )?;
+        write_rollout_with_cwd(&codex, "project-config-bounds-session", &project)?;
+
+        let report = diagnose_project_configs(codex.to_string_lossy().into_owned())?;
+        assert_eq!(report.issue_count, 1);
+        assert_eq!(report.repairable_count, 0);
+        assert!(!report.issues[0].repairable);
+        assert!(report.issues[0].message.contains("需要人工决定"));
+
+        let repaired = repair_project_configs(codex.to_string_lossy().into_owned(), false)?;
+        assert_eq!(repaired.repaired_count, 0);
+
+        fs::remove_dir_all(&codex).ok();
+        fs::remove_dir_all(&project).ok();
         Ok(())
     }
 

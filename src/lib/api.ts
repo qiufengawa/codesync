@@ -198,6 +198,46 @@ export type ProviderInfo = {
   exists: boolean;
 };
 
+export type ProjectConfigIssue = {
+  project_cwd: string;
+  config_path: string;
+  session_count: number;
+  session_ids: string[];
+  current_min_wait_timeout_ms: number | null;
+  current_default_wait_timeout_ms: number | null;
+  current_max_wait_timeout_ms: number | null;
+  suggested_default_wait_timeout_ms: number | null;
+  repairable: boolean;
+  message: string;
+};
+
+export type ProjectConfigReport = {
+  scanned_projects: number;
+  config_files: number;
+  issue_count: number;
+  repairable_count: number;
+  issues: ProjectConfigIssue[];
+};
+
+export type ProjectConfigRepairItem = {
+  project_cwd: string;
+  config_path: string;
+  changed: boolean;
+  dry_run: boolean;
+  old_default_wait_timeout_ms: number | null;
+  new_default_wait_timeout_ms: number;
+};
+
+export type ProjectConfigRepairReport = {
+  scanned_projects: number;
+  config_files: number;
+  issue_count: number;
+  repaired_count: number;
+  dry_run: boolean;
+  items: ProjectConfigRepairItem[];
+  errors: string[];
+};
+
 export type OrphanPruneReport = {
   index_removed: number;
   threads_removed: number;
@@ -616,6 +656,10 @@ export const api = {
 
   // ========================= 修复 =========================
   getProviderInfo: (codexDir: string) => invoke<ProviderInfo>("get_provider_info", { codexDir }),
+  diagnoseProjectConfigs: (codexDir: string) =>
+    invoke<ProjectConfigReport>("diagnose_project_configs", { codexDir }),
+  repairProjectConfigs: (codexDir: string, dryRun: boolean) =>
+    invoke<ProjectConfigRepairReport>("repair_project_configs", { codexDir, dryRun }),
   diagnoseCodexState: (codexDir: string) =>
     invoke<DiagnosticReport>("diagnose_codex_state", { codexDir }),
   repairSessionIndex: (codexDir: string, dryRun: boolean) =>

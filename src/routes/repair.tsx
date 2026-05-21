@@ -62,6 +62,7 @@ import {
   type DiagnosticReport,
   type FamilyIntegrityReport,
   type HistoryOrphanReport,
+  type ProjectConfigReport,
   type ProviderInfo,
   type SessionProvider,
   type SwitchStrategy,
@@ -77,10 +78,12 @@ function CodexRepairRoute() {
 
   const [diag, setDiag] = useState<DiagnosticReport | null>(null);
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
+  const [projectConfig, setProjectConfig] = useState<ProjectConfigReport | null>(null);
   const [integrity, setIntegrity] = useState<FamilyIntegrityReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [strategy, setStrategy] = useState<SwitchStrategy>("continuous");
   const [confirmBatch, setConfirmBatch] = useState(false);
+  const [confirmProjectConfigRepair, setConfirmProjectConfigRepair] = useState(false);
   const [confirmPrune, setConfirmPrune] = useState<null | "index" | "threads">(null);
   const [running, setRunning] = useState<string | null>(null);
   const [dryRun, setDryRun] = useState(false);
@@ -89,13 +92,15 @@ function CodexRepairRoute() {
     if (!codexDir) return;
     setLoading(true);
     try {
-      const [d, p, i] = await Promise.all([
+      const [d, p, c, i] = await Promise.all([
         api.diagnoseCodexState(codexDir),
         api.getProviderInfo(codexDir),
+        api.diagnoseProjectConfigs(codexDir),
         api.verifyFamilyIntegrity(codexDir),
       ]);
       setDiag(d);
       setProvider(p);
+      setProjectConfig(c);
       setIntegrity(i);
     } catch (e) {
       toast.error(`诊断失败：${String((e as Error)?.message ?? e)}`);
@@ -375,6 +380,137 @@ function CodexRepairRoute() {
               <Card className="min-w-0 overflow-hidden">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
+                    <ShieldAlert className="h-4 w-4" />
+                    项目级 Codex 配置
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        扫描每条 Codex 会话的工作目录，检查 <code>.codex/config.toml</code>{" "}
+                        是否包含会导致新版 Codex 恢复失败的 multi_agent_v2 超时配置。
+                      </TooltipContent>
+                    </Tooltip>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="min-w-0 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <Stat label="会话项目目录" value={projectConfig?.scanned_projects ?? "-"} />
+                    <Stat label="项目配置文件" value={projectConfig?.config_files ?? "-"} />
+                    <Stat
+                      label="配置问题"
+                      value={projectConfig?.issue_count ?? "-"}
+                      warn={(projectConfig?.issue_count ?? 0) > 0}
+                    />
+                    <Stat
+                      label="可自动修复"
+                      value={projectConfig?.repairable_count ?? "-"}
+                      warn={(projectConfig?.repairable_count ?? 0) > 0}
+                    />
+                  </div>
+
+                  {projectConfig == null ? (
+                    <div className="text-xs text-muted-foreground">—</div>
+                  ) : projectConfig.issues.length === 0 ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                      暂未发现会阻断会话恢复的项目级 Codex 配置。
+                    </div>
+                  ) : (
+                    <div className="max-h-56 space-y-2 overflow-auto rounded-md border p-2">
+                      {projectConfig.issues.map((issue) => (
+                        <div
+                          key={issue.config_path}
+                          className="min-w-0 rounded-md bg-muted/25 p-2 text-xs"
+                        >
+                          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                            <Badge
+                              variant="outline"
+                              className={
+                                issue.repairable
+                                  ? "h-5 border-amber-500/30 px-1.5 text-amber-600"
+                                  : "h-5 border-rose-500/30 px-1.5 text-rose-500"
+                              }
+                            >
+                              {issue.repairable ? "可修复" : "需手动处理"}
+                            </Badge>
+                            <span className="text-muted-foreground">
+                              影响 {issue.session_count} 条会话
+                            </span>
+                            {issue.suggested_default_wait_timeout_ms != null && (
+                              <code className="rounded bg-background/70 px-1 py-0.5 text-[11px]">
+                                default = {issue.suggested_default_wait_timeout_ms}
+                              </code>
+                            )}
+                          </div>
+                          <div className="mt-1 min-w-0 [overflow-wrap:anywhere]">
+                            {issue.message}
+                          </div>
+                          <div className="mt-1 min-w-0 font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+                            {issue.config_path}
+                          </div>
+                          {issue.session_ids.length > 0 && (
+                            <div className="mt-1 min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+                              {issue.session_ids.slice(0, 3).join("  ")}
+                              {issue.session_ids.length > 3 ? "  …" : ""}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant={dryRun ? "outline" : "default"}
+                          onClick={() => {
+                            if (dryRun) {
+                              void run("project_config_preview", async () => {
+                                const r = await api.repairProjectConfigs(codexDir, true);
+                                toast.success(
+                                  `预览：将修复 ${r.repaired_count} 个项目配置`,
+                                );
+                              });
+                            } else {
+                              setConfirmProjectConfigRepair(true);
+                            }
+                          }}
+                          disabled={
+                            !!running || (projectConfig?.repairable_count ?? 0) === 0
+                          }
+                          className="gap-1.5"
+                        >
+                          <Wrench className="h-3.5 w-3.5" />
+                          {dryRun ? "预览项目配置修复" : "修复项目 config.toml"}
+                          {(projectConfig?.repairable_count ?? 0) > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="ml-0.5 h-4 border-current/30 bg-background/20 px-1 text-[10px] font-normal"
+                            >
+                              {projectConfig?.repairable_count}
+                            </Badge>
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm text-xs">
+                        只补写或改写{" "}
+                        <code>features.multi_agent_v2.default_wait_timeout_ms</code>，
+                        让它满足已配置的 min/max 约束。不自动修改 min/max 边界值。
+                      </TooltipContent>
+                    </Tooltip>
+                    <span className="text-xs text-muted-foreground">
+                      {dryRun ? "当前：效果预览（不写入）" : "当前：实际执行（会写入项目配置）"}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="min-w-0 overflow-hidden">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base">
                     <Wand2 className="h-4 w-4" />
                     服务商 (Provider) 适配
                     <Tooltip>
@@ -607,6 +743,41 @@ function CodexRepairRoute() {
           )}
         </div>
       </ScrollArea>
+
+      <AlertDialog
+        open={confirmProjectConfigRepair}
+        onOpenChange={setConfirmProjectConfigRepair}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              修复 {projectConfig?.repairable_count ?? 0} 个项目级 Codex 配置
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              将写入对应工作目录下的 <code>.codex/config.toml</code>，只补写或改写{" "}
+              <code>features.multi_agent_v2.default_wait_timeout_ms</code>，
+              不自动修改 <code>min_wait_timeout_ms</code> 或{" "}
+              <code>max_wait_timeout_ms</code>。这些配置会影响 Codex App 恢复该项目里的历史会话。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmProjectConfigRepair(false);
+                void run("project_config_repair", async () => {
+                  const r = await api.repairProjectConfigs(codexDir, false);
+                  const suffix = r.errors.length > 0 ? `，失败 ${r.errors.length} 个` : "";
+                  toast.success(`已修复 ${r.repaired_count} 个项目配置${suffix}`);
+                  await refresh();
+                });
+              }}
+            >
+              确认修复
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmBatch} onOpenChange={setConfirmBatch}>
         <AlertDialogContent>

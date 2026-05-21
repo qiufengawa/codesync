@@ -69,6 +69,8 @@ pub fn run() {
             fs_ops::open_latest_release_page,
             fs_ops::copy_resume_command,
             repair::get_provider_info,
+            repair::diagnose_project_configs,
+            repair::repair_project_configs,
             repair::diagnose_codex_state,
             repair::repair_session_index,
             repair::rebuild_threads_table,

@@ -93,15 +93,12 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
-            This release adds keyboard scrolling support to the session preview dialog.
-
             Changes:
-            - Added Home, End, Page Up, and Page Down support inside the session preview dialog.
-            - Kept preview scrolling shortcuts scoped to the preview dialog so global shortcuts still ignore dialogs.
-            - Preserved text editing behavior by ignoring these shortcuts while the preview filter input is focused.
-            - Documented the app shortcuts in README.
-
-            Assets include desktop packages and platform-specific cc-sessions CLI packages.
+            - 新增“项目级 Codex 配置”诊断，修复页会扫描历史会话工作目录下的 `.codex/config.toml`。
+            - 支持自动补写或修正 `features.multi_agent_v2.default_wait_timeout_ms`，避免新版 Codex 恢复会话时因默认等待时间小于最小等待时间而失败。
+            - 对 `min_wait_timeout_ms > max_wait_timeout_ms` 等边界本身冲突的配置保持显式报错，不做猜测性修改。
+            - 新增 CLI 命令 `cc-sessions repair project-configs`，支持 `--dry-run` 预览和 `--fix` 修复。
+            - 版本号更新至 v0.2.15，并继续发布桌面安装包、Windows 便携版和各平台 CLI 包。
           releaseDraft: false
           prerelease: false
 

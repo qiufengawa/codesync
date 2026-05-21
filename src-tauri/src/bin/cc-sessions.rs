@@ -170,7 +170,7 @@ fn print_help() {
   stats <kpi|projects|models|timeseries|heatmap>
   backup <create|list|open|verify|delete|restore|restore-all>
   bundle <export|export-all|list|verify|import|pack|unpack>
-  repair <provider-info|diagnose|index|threads|prune|claude-history|clone|batch-clone|fork>
+  repair <provider-info|project-configs|diagnose|index|threads|prune|claude-history|clone|batch-clone|fork>
   family <store|verify|overlay|rollback|delete-branch|sync-states|sync-into-active|sync-active-into>
   settings <defaults|read|validate>
   menu
@@ -731,6 +731,49 @@ fn cmd_repair(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 println!("config_path\t{}", info.config_path);
                 println!("exists\t{}", info.exists);
             })
+        }
+        "project-configs" => {
+            let fix = take_flag(&mut args, "--fix");
+            let dry_run = take_flag(&mut args, "--dry-run");
+            ensure_no_args(&args)?;
+            if fix {
+                let report = repair::repair_project_configs(ctx.codex_dir.clone(), dry_run)?;
+                output(ctx, &report, |report| {
+                    println!("scanned_projects\t{}", report.scanned_projects);
+                    println!("config_files\t{}", report.config_files);
+                    println!("issue_count\t{}", report.issue_count);
+                    println!("repaired_count\t{}", report.repaired_count);
+                    println!("dry_run\t{}", report.dry_run);
+                    for item in &report.items {
+                        println!(
+                            "fixed\t{}\told={}\tnew={}\tchanged={}",
+                            item.config_path,
+                            item.old_default_wait_timeout_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "(missing)".to_string()),
+                            item.new_default_wait_timeout_ms,
+                            item.changed
+                        );
+                    }
+                    for error in &report.errors {
+                        println!("error\t{error}");
+                    }
+                })
+            } else {
+                let report = repair::diagnose_project_configs(ctx.codex_dir.clone())?;
+                output(ctx, &report, |report| {
+                    println!("scanned_projects\t{}", report.scanned_projects);
+                    println!("config_files\t{}", report.config_files);
+                    println!("issue_count\t{}", report.issue_count);
+                    println!("repairable_count\t{}", report.repairable_count);
+                    for issue in &report.issues {
+                        println!(
+                            "issue\t{}\tsessions={}\trepairable={}\t{}",
+                            issue.config_path, issue.session_count, issue.repairable, issue.message
+                        );
+                    }
+                })
+            }
         }
         "diagnose" => {
             ensure_no_args(&args)?;

@@ -500,6 +500,50 @@ pub struct ProviderInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ProjectConfigIssue {
+    pub project_cwd: String,
+    pub config_path: String,
+    pub session_count: u32,
+    pub session_ids: Vec<String>,
+    pub current_min_wait_timeout_ms: Option<u64>,
+    pub current_default_wait_timeout_ms: Option<u64>,
+    pub current_max_wait_timeout_ms: Option<u64>,
+    pub suggested_default_wait_timeout_ms: Option<u64>,
+    pub repairable: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectConfigReport {
+    pub scanned_projects: u32,
+    pub config_files: u32,
+    pub issue_count: u32,
+    pub repairable_count: u32,
+    pub issues: Vec<ProjectConfigIssue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectConfigRepairItem {
+    pub project_cwd: String,
+    pub config_path: String,
+    pub changed: bool,
+    pub dry_run: bool,
+    pub old_default_wait_timeout_ms: Option<u64>,
+    pub new_default_wait_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectConfigRepairReport {
+    pub scanned_projects: u32,
+    pub config_files: u32,
+    pub issue_count: u32,
+    pub repaired_count: u32,
+    pub dry_run: bool,
+    pub items: Vec<ProjectConfigRepairItem>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct OrphanPruneReport {
     pub index_removed: u32,
     pub threads_removed: u32,
