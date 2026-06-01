@@ -241,6 +241,8 @@ pub struct DiagnosticReport {
     pub archived_rollout_count: u32,
     pub index_count: u32,
     pub threads_count: u32,
+    pub threads_active_count: u32,
+    pub threads_archived_count: u32,
     pub rollout_ids: Vec<String>,
     pub index_ids: Vec<String>,
     pub threads_ids: Vec<String>,

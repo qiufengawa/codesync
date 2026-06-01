@@ -535,6 +535,7 @@ struct RolloutBrief {
     model: Option<String>,
     reasoning_effort: Option<String>,
     first_user_message: String,
+    tokens_used: i64,
     updated_at_ms: i64,
     created_at_ms: i64,
 }
@@ -552,6 +553,7 @@ fn read_rollout_brief(codex_dir: &Path, path: &Path) -> AppResult<Option<Rollout
     let mut model: Option<String> = None;
     let mut reasoning_effort: Option<String> = None;
     let mut first_user: Option<String> = None;
+    let mut tokens_used: i64 = 0;
     let mut created_ms: i64 = 0;
     let mut last_ms: i64 = 0;
     for (i, line) in reader.lines().enumerate() {
@@ -574,6 +576,9 @@ fn read_rollout_brief(codex_dir: &Path, path: &Path) -> AppResult<Option<Rollout
             }
         }
         let outer_type = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        if let Some(total) = crate::rollout::token_total_from_value(&v) {
+            tokens_used = total;
+        }
         match outer_type {
             "session_meta" => {
                 let payload = v.get("payload");
@@ -660,6 +665,7 @@ fn read_rollout_brief(codex_dir: &Path, path: &Path) -> AppResult<Option<Rollout
         model,
         reasoning_effort,
         first_user_message: first_user.unwrap_or_default(),
+        tokens_used,
         updated_at_ms: last_ms,
         created_at_ms: created_ms,
     }))
@@ -806,16 +812,30 @@ pub fn diagnose_codex_state(codex_dir: String) -> AppResult<DiagnosticReport> {
 
     // 4) threads 表
     let mut threads_ids: Vec<String> = Vec::new();
+    let mut threads_active_ids: Vec<String> = Vec::new();
+    let mut threads_archived_ids: Vec<String> = Vec::new();
     if paths::state_db_path(&codex).is_file() {
         let conn = state_db::open_ro(&codex)?;
-        let mut stmt = conn.prepare("SELECT id FROM threads")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut stmt = conn.prepare("SELECT id, COALESCE(archived,0) FROM threads")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
+        })?;
         for r in rows.flatten() {
-            threads_ids.push(r);
+            let (id, archived) = r;
+            if archived {
+                threads_archived_ids.push(id.clone());
+            } else {
+                threads_active_ids.push(id.clone());
+            }
+            threads_ids.push(id);
         }
     }
     threads_ids.sort();
     threads_ids.dedup();
+    threads_active_ids.sort();
+    threads_active_ids.dedup();
+    threads_archived_ids.sort();
+    threads_archived_ids.dedup();
 
     // 5) 差集
     let rs: BTreeSet<&String> = rollout_ids.iter().collect();
@@ -839,6 +859,8 @@ pub fn diagnose_codex_state(codex_dir: String) -> AppResult<DiagnosticReport> {
         archived_rollout_count: archived_count,
         index_count: index_ids.len() as u32,
         threads_count: threads_ids.len() as u32,
+        threads_active_count: threads_active_ids.len() as u32,
+        threads_archived_count: threads_archived_ids.len() as u32,
         rollout_ids,
         index_ids,
         threads_ids,
@@ -1333,7 +1355,7 @@ fn thread_values_from_rollout(
                 "archived" => Value::from(if archived { 1i64 } else { 0i64 }),
                 "archived_at" if archived => Value::from(archived_at),
                 "archived_at" => Value::Null,
-                "tokens_used" => Value::from(0i64),
+                "tokens_used" => Value::from(brief.tokens_used),
                 "cli_version" => Value::String(
                     metadata_string_field(&payload, "cli_version").unwrap_or_default(),
                 ),
@@ -3359,6 +3381,40 @@ mod tests {
         Ok(path)
     }
 
+    fn write_token_rollout(codex: &Path, id: &str) -> AppResult<PathBuf> {
+        let rollout_dir = codex.join("sessions").join("2026").join("04").join("24");
+        fs::create_dir_all(&rollout_dir)?;
+        let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
+        let lines = vec![
+            serde_json::json!({
+                "timestamp": "2026-04-24T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": id,
+                    "model_provider": DEFAULT_PROVIDER,
+                    "cwd": "F:\\project\\example",
+                    "source": DEFAULT_THREAD_SOURCE
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-04-24T00:00:01Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "total_tokens": 2_468_000
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        ];
+        fs::write(&path, format!("{}\n", lines.join("\n")))?;
+        Ok(path)
+    }
+
     fn write_index_line(codex: &Path, id: &str) -> AppResult<()> {
         let line = serde_json::json!({
             "id": id,
@@ -3369,6 +3425,22 @@ mod tests {
             paths::session_index_path(codex),
             format!("{}\n", serde_json::to_string(&line)?),
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn thread_rebuild_values_include_rollout_token_count() -> AppResult<()> {
+        let codex = temp_codex_dir("cc-session-manager-repair-token-test");
+        let rollout = write_token_rollout(&codex, "token-session")?;
+
+        let values = thread_values_from_rollout(&codex, &rollout, false)?.expect("thread values");
+        fs::remove_dir_all(&codex).ok();
+
+        let token_index = THREADS_COLS
+            .iter()
+            .position(|name| *name == "tokens_used")
+            .expect("tokens_used column");
+        assert_eq!(values[token_index], Value::from(2_468_000i64));
         Ok(())
     }
 
@@ -3585,6 +3657,10 @@ mod tests {
         let prune = prune_orphan_entries(codex.to_string_lossy().into_owned(), false, true, true)?;
         fs::remove_dir_all(&codex).ok();
 
+        assert_eq!(diag.archived_rollout_count, 1);
+        assert_eq!(diag.threads_count, 1);
+        assert_eq!(diag.threads_active_count, 0);
+        assert_eq!(diag.threads_archived_count, 1);
         assert!(diag.orphan_in_threads.is_empty());
         assert_eq!(prune.threads_removed, 0);
         Ok(())

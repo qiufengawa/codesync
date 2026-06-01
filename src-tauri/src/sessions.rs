@@ -87,6 +87,11 @@ fn query_summaries(
     // NOTE: 在 SQL 层过滤 NULL / 空 thread_id，避免 `r.get::<_, String>(0)` 在 NULL 上报
     // "Invalid column type Null"。某些历史数据里 logs.thread_id 存在 NULL 值。
     let mut out = rows;
+    for s in out.iter_mut() {
+        if s.tokens_used <= 0 {
+            s.tokens_used = rollout_token_total(&s.rollout_path);
+        }
+    }
     if let Some(conn) = logs_conn {
         let mut counts: HashMap<String, i64> = HashMap::new();
         let mut stmt = conn.prepare(
@@ -106,6 +111,11 @@ fn query_summaries(
         }
     }
     Ok(out)
+}
+
+fn rollout_token_total(rollout_path: &str) -> i64 {
+    let cleaned = paths::strip_verbatim(rollout_path);
+    crate::rollout::read_rollout_token_total(Path::new(&cleaned)).unwrap_or(0)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
@@ -533,6 +543,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use std::io::Write;
 
     fn temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -540,6 +551,96 @@ mod tests {
             .expect("system clock before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("cc-sessions-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn create_codex_threads_table(codex: &Path) -> AppResult<rusqlite::Connection> {
+        fs::create_dir_all(codex.join("sessions"))?;
+        let conn = rusqlite::Connection::open(codex.join("state_5.sqlite"))?;
+        conn.execute(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT,
+                cwd TEXT,
+                title TEXT,
+                first_user_message TEXT,
+                model TEXT,
+                reasoning_effort TEXT,
+                tokens_used INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER,
+                archived INTEGER,
+                git_branch TEXT,
+                source TEXT,
+                agent_nickname TEXT,
+                agent_role TEXT
+            )",
+            [],
+        )?;
+        Ok(conn)
+    }
+
+    #[test]
+    fn list_sessions_reads_rollout_tokens_when_thread_cache_is_zero() -> AppResult<()> {
+        let codex = temp_dir("codex-token-fallback");
+        let rollout = codex.join("sessions").join("rollout-codex-token.jsonl");
+        fs::create_dir_all(rollout.parent().expect("rollout parent"))?;
+        {
+            let mut out = fs::File::create(&rollout)?;
+            for value in [
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "total_tokens": 1234
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "total_tokens": 2_468_000
+                            }
+                        }
+                    }
+                }),
+            ] {
+                writeln!(out, "{}", serde_json::to_string(&value)?)?;
+            }
+        }
+        let conn = create_codex_threads_table(&codex)?;
+        conn.execute(
+            "INSERT INTO threads (
+                id, rollout_path, cwd, title, first_user_message, model, reasoning_effort,
+                tokens_used, created_at, updated_at, archived, git_branch, source,
+                agent_nickname, agent_role
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, 1770000000, 1770000300, 0, NULL, NULL, NULL, NULL)",
+            (
+                "codex-token",
+                rollout.to_string_lossy().into_owned(),
+                "F:\\work\\codex-project",
+                "Codex title",
+                "hello codex",
+                "gpt-5",
+            ),
+        )?;
+        drop(conn);
+
+        let sessions = list_sessions(
+            Some("codex".to_string()),
+            codex.to_string_lossy().into_owned(),
+            None,
+        )?;
+        fs::remove_dir_all(&codex).ok();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].tokens_used, 2_468_000);
+        Ok(())
     }
 
     #[test]

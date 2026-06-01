@@ -783,6 +783,8 @@ fn cmd_repair(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 println!("archived_rollout_count\t{}", report.archived_rollout_count);
                 println!("index_count\t{}", report.index_count);
                 println!("threads_count\t{}", report.threads_count);
+                println!("threads_active_count\t{}", report.threads_active_count);
+                println!("threads_archived_count\t{}", report.threads_archived_count);
                 println!("missing_in_index\t{}", report.missing_in_index.len());
                 println!("missing_in_threads\t{}", report.missing_in_threads.len());
                 println!("orphan_in_index\t{}", report.orphan_in_index.len());

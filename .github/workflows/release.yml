@@ -94,11 +94,13 @@ jobs:
           releaseName: CC Sessions ${{ github.ref_name }}
           releaseBody: |
             Changes:
-            - 新增“项目级 Codex 配置”诊断，修复页会扫描历史会话工作目录下的 `.codex/config.toml`。
-            - 支持自动补写或修正 `features.multi_agent_v2.default_wait_timeout_ms`，避免新版 Codex 恢复会话时因默认等待时间小于最小等待时间而失败。
-            - 对 `min_wait_timeout_ms > max_wait_timeout_ms` 等边界本身冲突的配置保持显式报错，不做猜测性修改。
-            - 新增 CLI 命令 `cc-sessions repair project-configs`，支持 `--dry-run` 预览和 `--fix` 修复。
-            - 版本号更新至 v0.2.15，并继续发布桌面安装包、Windows 便携版和各平台 CLI 包。
+            - 修复 Codex 会话 token 读取，数据库缓存为 0 时会从 rollout 的 `token_count` 事件恢复真实累计值。
+            - 统一会话列表和导出列表的 token 展示，自动按 K、M、B 单位格式化。
+            - 修复 Claude 会话标题解析，优先使用自定义标题和 `ai-title`，避免误用首条用户问题。
+            - 修复修复页诊断计数，将应用数据库表、会话索引和工具归档备份分开展示，避免把工具备份误认为 Codex 已归档会话。
+            - 优化会话卡片布局和悬浮提示层级，避免项目名提示被列表内容遮挡。
+            - 导出会话列表增加搜索框，支持按会话 id、标题、首条消息、目录、source、分支和推理档位快速筛选。
+            - CLI 同步核心修复，支持在无桌面环境中使用更新后的 token 读取、修复诊断和标题解析逻辑。
           releaseDraft: false
           prerelease: false
 

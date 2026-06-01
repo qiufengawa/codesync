@@ -268,6 +268,8 @@ export type DiagnosticReport = {
   archived_rollout_count: number;
   index_count: number;
   threads_count: number;
+  threads_active_count: number;
+  threads_archived_count: number;
   rollout_ids: string[];
   index_ids: string[];
   threads_ids: string[];

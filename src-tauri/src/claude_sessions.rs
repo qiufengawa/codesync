@@ -128,6 +128,7 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
     let mut first_user_message: Option<String> = None;
     let mut ai_title: Option<String> = None;
     let mut custom_title: Option<String> = None;
+    let mut session_title: Option<String> = None;
     let mut summary_title: Option<String> = None;
     let mut last_prompt: Option<String> = None;
     let mut tail_summary: Option<String> = None;
@@ -160,18 +161,25 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
         }
 
         let event_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+        assign_if_some(&mut session_title, hook_session_title(&value));
         match event_type {
             "ai-title" => {
-                ai_title = string_field(&value, "aiTitle");
+                assign_if_some(
+                    &mut ai_title,
+                    first_string_field(&value, &["aiTitle", "title"]),
+                );
             }
             "custom-title" => {
-                custom_title = string_field(&value, "customTitle");
+                assign_if_some(
+                    &mut custom_title,
+                    first_string_field(&value, &["customTitle", "title"]),
+                );
             }
             "summary" => {
-                summary_title = string_field(&value, "summary");
+                assign_if_some(&mut summary_title, string_field(&value, "summary"));
             }
             "last-prompt" => {
-                last_prompt = string_field(&value, "lastPrompt");
+                assign_if_some(&mut last_prompt, string_field(&value, "lastPrompt"));
             }
             _ => {}
         }
@@ -221,8 +229,9 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
         return Ok(None);
     };
     let cwd_value = cwd.unwrap_or_default();
-    let title = ai_title
-        .or(custom_title)
+    let title = custom_title
+        .or(session_title)
+        .or(ai_title)
         .or(summary_title)
         .or_else(|| first_user_message.clone())
         .or(last_prompt)
@@ -322,6 +331,8 @@ fn classify_preview(index: usize, raw: Value) -> Option<PreviewEvent> {
 fn claude_non_message_summary(raw: &Value) -> String {
     for key in [
         "customTitle",
+        "aiTitle",
+        "sessionTitle",
         "summary",
         "content",
         "text",
@@ -431,6 +442,51 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| string_field(value, key))
+}
+
+fn assign_if_some(slot: &mut Option<String>, value: Option<String>) {
+    if let Some(value) = value {
+        *slot = Some(value);
+    }
+}
+
+fn hook_session_title(value: &Value) -> Option<String> {
+    hook_output_title(value)
+        .or_else(|| value.get("attachment").and_then(hook_output_title))
+        .or_else(|| {
+            value
+                .get("attachment")
+                .and_then(|attachment| attachment.get("stdout"))
+                .and_then(Value::as_str)
+                .and_then(parse_hook_stdout_session_title)
+        })
+        .or_else(|| {
+            value
+                .get("stdout")
+                .and_then(Value::as_str)
+                .and_then(parse_hook_stdout_session_title)
+        })
+}
+
+fn hook_output_title(value: &Value) -> Option<String> {
+    string_field(value, "sessionTitle").or_else(|| {
+        value
+            .get("hookSpecificOutput")
+            .and_then(|output| string_field(output, "sessionTitle"))
+    })
+}
+
+fn parse_hook_stdout_session_title(stdout: &str) -> Option<String> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let value: Value = serde_json::from_str(trimmed).ok()?;
+    hook_output_title(&value)
 }
 
 fn parse_timestamp_to_seconds(value: &Value) -> Option<i64> {
@@ -714,6 +770,21 @@ mod tests {
         Ok(file)
     }
 
+    fn write_session_values(
+        claude: &Path,
+        file_name: &str,
+        values: Vec<Value>,
+    ) -> AppResult<PathBuf> {
+        let session_dir = claude.join("projects").join("sample-project");
+        fs::create_dir_all(&session_dir)?;
+        let file = session_dir.join(file_name);
+        let mut out = File::create(&file)?;
+        for value in values {
+            writeln!(out, "{}", serde_json::to_string(&value)?)?;
+        }
+        Ok(file)
+    }
+
     #[test]
     fn skips_slash_command_wrapper_in_first_user_message() {
         let raw = "<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args>max</command-args>";
@@ -831,6 +902,144 @@ mod tests {
         let events = preview_range(&file.to_string_lossy(), 0, 10)?;
         fs::remove_dir_all(&claude).ok();
         assert!(events.iter().any(|event| event.role == "tool_result"));
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_ai_title_when_later_title_event_is_empty() -> AppResult<()> {
+        let claude = temp_dir("cc-session-manager-claude-ai-title-test");
+        write_session_values(
+            &claude,
+            "claude-title.jsonl",
+            vec![
+                serde_json::json!({
+                    "sessionId": "claude-title",
+                    "cwd": "F:\\work\\sample-project",
+                    "timestamp": "2026-04-20T10:00:00Z",
+                    "type": "user",
+                    "message": {"role": "user", "content": "first user prompt"}
+                }),
+                serde_json::json!({
+                    "sessionId": "claude-title",
+                    "timestamp": "2026-04-20T10:00:10Z",
+                    "type": "ai-title",
+                    "aiTitle": "Generated Claude Title"
+                }),
+                serde_json::json!({
+                    "sessionId": "claude-title",
+                    "timestamp": "2026-04-20T10:00:20Z",
+                    "type": "ai-title"
+                }),
+            ],
+        )?;
+
+        let sessions = scan_sessions(&claude)?;
+        fs::remove_dir_all(&claude).ok();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "Generated Claude Title");
+        Ok(())
+    }
+
+    #[test]
+    fn custom_title_overrides_ai_title() -> AppResult<()> {
+        let claude = temp_dir("cc-session-manager-claude-custom-title-test");
+        write_session_values(
+            &claude,
+            "claude-custom.jsonl",
+            vec![
+                serde_json::json!({
+                    "sessionId": "claude-custom",
+                    "cwd": "F:\\work\\sample-project",
+                    "timestamp": "2026-04-20T10:00:00Z",
+                    "type": "user",
+                    "message": {"role": "user", "content": "first user prompt"}
+                }),
+                serde_json::json!({
+                    "sessionId": "claude-custom",
+                    "timestamp": "2026-04-20T10:00:10Z",
+                    "type": "ai-title",
+                    "aiTitle": "Generated Claude Title"
+                }),
+                serde_json::json!({
+                    "sessionId": "claude-custom",
+                    "timestamp": "2026-04-20T10:00:20Z",
+                    "type": "custom-title",
+                    "customTitle": "Manual Claude Title"
+                }),
+            ],
+        )?;
+
+        let sessions = scan_sessions(&claude)?;
+        fs::remove_dir_all(&claude).ok();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "Manual Claude Title");
+        Ok(())
+    }
+
+    #[test]
+    fn reads_hook_session_title_from_stdout() -> AppResult<()> {
+        let claude = temp_dir("cc-session-manager-claude-hook-title-test");
+        let stdout = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "sessionTitle": "Hook Claude Title"
+            }
+        })
+        .to_string();
+        write_session_values(
+            &claude,
+            "claude-hook-title.jsonl",
+            vec![
+                serde_json::json!({
+                    "sessionId": "claude-hook-title",
+                    "cwd": "F:\\work\\sample-project",
+                    "timestamp": "2026-04-20T10:00:00Z",
+                    "type": "user",
+                    "message": {"role": "user", "content": "first user prompt"}
+                }),
+                serde_json::json!({
+                    "sessionId": "claude-hook-title",
+                    "timestamp": "2026-04-20T10:00:10Z",
+                    "type": "user",
+                    "attachment": {
+                        "type": "hook_success",
+                        "hookEvent": "UserPromptSubmit",
+                        "stdout": stdout
+                    }
+                }),
+            ],
+        )?;
+
+        let sessions = scan_sessions(&claude)?;
+        fs::remove_dir_all(&claude).ok();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "Hook Claude Title");
+        Ok(())
+    }
+
+    #[test]
+    fn falls_back_to_first_user_message_without_explicit_title() -> AppResult<()> {
+        let claude = temp_dir("cc-session-manager-claude-first-user-title-test");
+        write_session_values(
+            &claude,
+            "claude-first-user.jsonl",
+            vec![serde_json::json!({
+                "sessionId": "claude-first-user",
+                "cwd": "F:\\work\\sample-project",
+                "timestamp": "2026-04-20T10:00:00Z",
+                "type": "user",
+                "message": {"role": "user", "content": "first user prompt"}
+            })],
+        )?;
+
+        let sessions = scan_sessions(&claude)?;
+        fs::remove_dir_all(&claude).ok();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "first user prompt");
         Ok(())
     }
 

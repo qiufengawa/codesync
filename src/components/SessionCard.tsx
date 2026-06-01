@@ -88,7 +88,7 @@ export const SessionCard = memo(function SessionCard({
           "border-emerald-500/45 bg-emerald-500/[0.035] before:opacity-100 dark:border-emerald-500/35 dark:bg-emerald-500/[0.07]",
       )}
     >
-      <div className="flex min-w-0 gap-3 p-4">
+      <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
         <Checkbox
           checked={selected}
           onCheckedChange={() => onToggleSelect(s.id)}
@@ -97,20 +97,16 @@ export const SessionCard = memo(function SessionCard({
         />
 
         <div className="min-w-0 flex-1 space-y-2">
-          {/* 顶部元信息：项目名（可选） + id + 模型 + 时间 */}
-          <div className="flex min-w-0 items-center gap-x-2 gap-y-1 text-xs">
+          {/* 顶部元信息：项目名（可选） + id + 模型 */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             {showProject && (
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="min-w-0 cursor-default truncate font-medium text-foreground">
-                      <Hl text={s.cwd_display || s.cwd} q={query} />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent align="start" className="font-mono text-xs">
-                    {s.cwd}
-                  </TooltipContent>
-                </Tooltip>
+                <span
+                  className="min-w-0 cursor-default truncate font-medium text-foreground"
+                  title={s.cwd}
+                >
+                  <Hl text={s.cwd_display || s.cwd} q={query} />
+                </span>
                 <MetaDot />
               </>
             )}
@@ -219,14 +215,6 @@ export const SessionCard = memo(function SessionCard({
                 <TooltipContent>已有备份</TooltipContent>
               </Tooltip>
             )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="ml-auto shrink-0 cursor-default text-muted-foreground">
-                  {relativeTime(s.updated_at)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>更新 {absoluteTime(s.updated_at)}</TooltipContent>
-            </Tooltip>
           </div>
 
           {/* 标题 */}
@@ -241,7 +229,7 @@ export const SessionCard = memo(function SessionCard({
             </p>
           )}
 
-          {/* 底部：操作按钮 + 右侧数据 */}
+          {/* 底部：操作按钮 */}
           <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
             <Button variant="outline" size="sm" onClick={() => onPreview(s)} className="h-8 gap-1.5 border-border/70">
               <Eye className="h-3.5 w-3.5" />
@@ -255,17 +243,30 @@ export const SessionCard = memo(function SessionCard({
               <FolderOpen className="h-3.5 w-3.5" />
               打开目录
             </Button>
+          </div>
+        </div>
 
-            <div className="ml-auto flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
-              {s.tokens_used > 0 && (
-                <span className="inline-flex items-baseline gap-1 tabular-nums">
-                  <span className="font-medium text-foreground/75">{humanTokens(s.tokens_used)}</span>
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">tok</span>
-                </span>
-              )}
-              {s.tokens_used > 0 && <MetaDot />}
-              <span className="tabular-nums font-medium text-foreground/75">{humanBytes(s.rollout_bytes)}</span>
-            </div>
+        <div className="col-start-2 flex min-w-0 items-center justify-between gap-2 sm:col-start-3 sm:row-start-1 sm:min-w-[9rem] sm:flex-col sm:items-end sm:self-stretch">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="shrink-0 cursor-default whitespace-nowrap text-xs text-muted-foreground">
+                {relativeTime(s.updated_at)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent align="end">更新 {absoluteTime(s.updated_at)}</TooltipContent>
+          </Tooltip>
+
+          <div className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
+            {s.tokens_used > 0 && (
+              <span className="inline-flex items-baseline gap-1 tabular-nums">
+                <span className="font-medium text-foreground/75">{humanTokens(s.tokens_used)}</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">tok</span>
+              </span>
+            )}
+            {s.tokens_used > 0 && <MetaDot />}
+            <span className="whitespace-nowrap tabular-nums font-medium text-foreground/75">
+              {humanBytes(s.rollout_bytes)}
+            </span>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

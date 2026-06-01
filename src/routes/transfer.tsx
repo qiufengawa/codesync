@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Loader2,
   Package,
+  Search,
   ShieldAlert,
   Upload,
 } from "lucide-react";
@@ -46,7 +47,7 @@ import {
   type ProjectPathMapping,
   type SessionProvider,
 } from "@/lib/api";
-import { humanBytes } from "@/lib/format";
+import { humanBytes, humanTokens } from "@/lib/format";
 import { basename, dirname, joinPath } from "@/lib/cwd";
 
 export default function TransferRoute({ provider = "codex" }: { provider?: SessionProvider }) {
@@ -106,6 +107,7 @@ function ExportPanel({
   const [machineLabel, setMachineLabel] = useState("");
   const [exportGroup, setExportGroup] = useState("default");
   const [activeOnly, setActiveOnly] = useState(true);
+  const [sessionSearch, setSessionSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
   const [lastZipSource, setLastZipSource] = useState<string | null>(null);
@@ -127,7 +129,33 @@ function ExportPanel({
     });
   };
 
-  const visibleSessions = useMemo(() => sessions.slice(0, 500), [sessions]);
+  const filteredSessions = useMemo(() => {
+    const terms = sessionSearch
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (terms.length === 0) return sessions;
+
+    return sessions.filter((s) => {
+      const haystack = [
+        s.id,
+        s.title,
+        s.first_user_message,
+        s.cwd,
+        s.cwd_display,
+        s.source,
+        s.git_branch,
+        s.reasoning_effort,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    });
+  }, [sessions, sessionSearch]);
+  const visibleSessions = useMemo(() => filteredSessions.slice(0, 500), [filteredSessions]);
+  const visibleSelectedCount = visibleSessions.filter((s) => selectedIds.has(s.id)).length;
   const allSelected =
     visibleSessions.length > 0 &&
     visibleSessions.every((s) => selectedIds.has(s.id));
@@ -351,12 +379,14 @@ function ExportPanel({
             <Archive className="h-4 w-4" />
             会话（勾选即可逐条导出）
             <Badge variant="secondary" className="h-5 px-1.5 font-normal">
-              {sessions.length}
+              {sessionSearch.trim() ? `${filteredSessions.length}/${sessions.length}` : sessions.length}
             </Badge>
             {visibleSessions.length > 0 && (
               <span className="ml-auto text-xs font-normal text-muted-foreground">
-                已选 {visibleSessions.filter((s) => selectedIds.has(s.id)).length}/
-                {visibleSessions.length}
+                已选 {visibleSelectedCount}/{visibleSessions.length}
+                {filteredSessions.length > visibleSessions.length
+                  ? ` · 显示 ${visibleSessions.length}/${filteredSessions.length}`
+                  : ""}
               </span>
             )}
           </CardTitle>
@@ -369,63 +399,78 @@ function ExportPanel({
           ) : sessions.length === 0 ? (
             <EmptyState title="没有会话可导出" />
           ) : (
-            <div className="rounded-md border">
-              <div className="grid grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_5rem] items-center gap-2 border-b bg-muted/40 px-3 py-2 text-[11px] font-medium text-muted-foreground">
-                <Checkbox
-                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
-                  onCheckedChange={toggleAll}
-                  aria-label="全选当前列表"
+            <div className="space-y-3">
+              <div className="relative max-w-md">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={sessionSearch}
+                  onChange={(e) => setSessionSearch(e.target.value)}
+                  placeholder="搜索 id / 标题 / 首条消息 / 目录"
+                  className="h-9 pl-8 text-xs"
                 />
-                <span>id</span>
-                <span>标题</span>
-                <span>model</span>
-                <span className="text-right">tokens</span>
               </div>
-              <ScrollArea className="h-96">
-                <ul className="divide-y text-xs">
-                  {visibleSessions.map((s) => (
-                    <li
-                      key={s.id}
-                      className={`grid grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_5rem] items-center gap-2 px-3 py-2 ${
-                        selectedIds.has(s.id)
-                          ? "bg-primary/5"
-                          : "hover:bg-muted/30"
-                      }`}
-                    >
-                      <Checkbox
-                        checked={selectedIds.has(s.id)}
-                        onCheckedChange={() => toggle(s.id)}
-                        aria-label="选择该会话"
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => copyId(s.id)}
-                            className="flex min-w-0 items-center gap-1 truncate text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                            aria-label="复制会话 ID"
-                          >
-                            <span className="truncate">{s.id.slice(0, 8)}…</span>
-                            <Copy className="h-3 w-3 shrink-0 opacity-60" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent className="font-mono text-[11px]">
-                          {s.id} · 点击复制
-                        </TooltipContent>
-                      </Tooltip>
-                      <span className="truncate" title={s.title || s.first_user_message || ""}>
-                        {s.title || s.first_user_message || "—"}
-                      </span>
-                      <span className="truncate text-muted-foreground" title={s.model ?? ""}>
-                        {s.model ?? "—"}
-                      </span>
-                      <span className="text-right tabular-nums text-muted-foreground">
-                        {s.tokens_used}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </ScrollArea>
+              {filteredSessions.length === 0 ? (
+                <EmptyState title="没有匹配的会话" />
+              ) : (
+                <div className="rounded-md border">
+                  <div className="grid grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_5rem] items-center gap-2 border-b bg-muted/40 px-3 py-2 text-[11px] font-medium text-muted-foreground">
+                    <Checkbox
+                      checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                      onCheckedChange={toggleAll}
+                      aria-label="全选当前列表"
+                    />
+                    <span>id</span>
+                    <span>标题</span>
+                    <span>model</span>
+                    <span className="text-right">tokens</span>
+                  </div>
+                  <ScrollArea className="h-96">
+                    <ul className="divide-y text-xs">
+                      {visibleSessions.map((s) => (
+                        <li
+                          key={s.id}
+                          className={`grid grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_5rem] items-center gap-2 px-3 py-2 ${
+                            selectedIds.has(s.id)
+                              ? "bg-primary/5"
+                              : "hover:bg-muted/30"
+                          }`}
+                        >
+                          <Checkbox
+                            checked={selectedIds.has(s.id)}
+                            onCheckedChange={() => toggle(s.id)}
+                            aria-label="选择该会话"
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => copyId(s.id)}
+                                className="flex min-w-0 items-center gap-1 truncate text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                                aria-label="复制会话 ID"
+                              >
+                                <span className="truncate">{s.id.slice(0, 8)}…</span>
+                                <Copy className="h-3 w-3 shrink-0 opacity-60" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="font-mono text-[11px]">
+                              {s.id} · 点击复制
+                            </TooltipContent>
+                          </Tooltip>
+                          <span className="truncate" title={s.title || s.first_user_message || ""}>
+                            {s.title || s.first_user_message || "—"}
+                          </span>
+                          <span className="truncate text-muted-foreground" title={s.model ?? ""}>
+                            {s.model ?? "—"}
+                          </span>
+                          <span className="text-right tabular-nums text-muted-foreground">
+                            {humanTokens(s.tokens_used)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

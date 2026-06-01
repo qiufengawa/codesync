@@ -1287,6 +1287,14 @@ fn repair_diagnose(ctx: &MenuContext) -> MenuResult<()> {
     println!("index_count                    {}", report.index_count);
     println!("threads_count                  {}", report.threads_count);
     println!(
+        "threads_active_count           {}",
+        report.threads_active_count
+    );
+    println!(
+        "threads_archived_count         {}",
+        report.threads_archived_count
+    );
+    println!(
         "missing_in_index               {}",
         report.missing_in_index.len()
     );

@@ -87,6 +87,12 @@ function CodexRepairRoute() {
   const [confirmPrune, setConfirmPrune] = useState<null | "index" | "threads">(null);
   const [running, setRunning] = useState<string | null>(null);
   const [dryRun, setDryRun] = useState(false);
+  const expectedThreadsCount =
+    diag == null ? null : diag.rollout_count + diag.archived_rollout_count;
+  const threadsStatHint =
+    diag == null
+      ? undefined
+      : `threads 表包含 ${diag.threads_active_count} 条活跃会话和 ${diag.threads_archived_count} 条本工具归档备份；归档备份存放在 archived_sessions/，不等同于 Codex 官方设置页的“已归档对话”。`;
 
   const refresh = useCallback(async () => {
     if (!codexDir) return;
@@ -165,15 +171,21 @@ function CodexRepairRoute() {
                       }
                     />
                     <Stat
-                      label="应用数据库表"
+                      label="数据库表 (threads)"
                       value={diag?.threads_count ?? "-"}
                       warn={
-                        diag != null && diag.threads_count !== diag.rollout_count
+                        diag != null &&
+                        expectedThreadsCount != null &&
+                        (diag.threads_count !== expectedThreadsCount ||
+                          diag.threads_active_count !== diag.rollout_count ||
+                          diag.threads_archived_count !== diag.archived_rollout_count)
                       }
+                      hint={threadsStatHint}
                     />
                     <Stat
-                      label="已归档会话"
+                      label="工具归档备份"
                       value={diag?.archived_rollout_count ?? "-"}
+                      hint="这里统计的是本工具放在 archived_sessions/ 的历史分支备份，不是 Codex 官方“已归档对话”页面。"
                     />
                   </div>
                   <Separator />

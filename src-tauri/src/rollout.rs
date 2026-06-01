@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -29,11 +29,7 @@ fn classify(index: usize, raw: Value) -> PreviewEvent {
         ("session_meta", _) => ("meta".into(), "session_meta".into(), "会话元数据".into()),
         ("event_msg", "task_started") => ("meta".into(), "task_started".into(), "任务开始".into()),
         ("event_msg", "token_count") => {
-            let total = raw
-                .get("payload")
-                .and_then(|p| p.get("total_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let total = token_total_from_value(&raw).unwrap_or(0);
             (
                 "meta".into(),
                 "token_count".into(),
@@ -306,6 +302,62 @@ fn preview_range_impl(path: &str, offset: usize, limit: usize) -> AppResult<Vec<
     Ok(out)
 }
 
+pub fn read_rollout_token_total(path: &Path) -> AppResult<i64> {
+    let f = File::open(path)?;
+    let reader = BufReader::new(f);
+    let mut total = 0i64;
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(raw) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(next) = token_total_from_value(&raw) {
+            total = next;
+        }
+    }
+    Ok(total)
+}
+
+pub fn token_total_from_value(raw: &Value) -> Option<i64> {
+    if raw.get("type").and_then(Value::as_str) != Some("event_msg") {
+        return None;
+    }
+    let payload = raw.get("payload")?;
+    if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+        return None;
+    }
+
+    nonnegative_i64(
+        payload
+            .get("info")
+            .and_then(|info| info.get("total_token_usage"))
+            .and_then(|usage| usage.get("total_tokens")),
+    )
+    .or_else(|| {
+        nonnegative_i64(
+            payload
+                .get("info")
+                .and_then(|info| info.get("total_tokens")),
+        )
+    })
+    .or_else(|| nonnegative_i64(payload.get("total_tokens")))
+    .or_else(|| nonnegative_i64(raw.get("total_tokens")))
+}
+
+fn nonnegative_i64(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    if let Some(n) = value.as_i64() {
+        return (n >= 0).then_some(n);
+    }
+    if let Some(n) = value.as_u64() {
+        return i64::try_from(n).ok();
+    }
+    None
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_session_meta(
     provider: Option<String>,
@@ -351,4 +403,78 @@ pub fn preview_session_meta(
             .map(String::from),
     };
     Ok(brief)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    fn temp_file(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{name}-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ))
+    }
+
+    #[test]
+    fn reads_latest_nested_token_count() -> AppResult<()> {
+        let file = temp_file("cc-session-manager-rollout-token-test");
+        {
+            let mut out = File::create(&file)?;
+            for value in [
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "total_tokens": 12
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "total_tokens": 3456789
+                            }
+                        }
+                    }
+                }),
+            ] {
+                writeln!(out, "{}", serde_json::to_string(&value)?)?;
+            }
+        }
+
+        let total = read_rollout_token_total(&file)?;
+        fs::remove_file(file).ok();
+
+        assert_eq!(total, 3_456_789);
+        Ok(())
+    }
+
+    #[test]
+    fn token_preview_uses_nested_total_token_usage() {
+        let raw = serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "total_tokens": 42
+                    }
+                }
+            }
+        });
+
+        let event = classify(0, raw);
+
+        assert_eq!(event.text_summary, "tokens: 42");
+    }
 }
