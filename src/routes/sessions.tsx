@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, MessageSquare, RotateCw } from "lucide-react";
+import { Loader2, MessageSquare, Network, RotateCw } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
 import { SessionList } from "@/components/SessionList";
 import { PreviewDialog } from "@/components/PreviewDialog";
@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { FamilyHistorySheet } from "@/components/FamilyHistorySheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useSessions } from "@/hooks/useSessions";
 import { useBackupIndex } from "@/hooks/useBackups";
 import { useSettings } from "@/stores/settings";
@@ -20,6 +21,7 @@ import { useHotkeys } from "@/hooks/useHotkeys";
 import { api, type FamilyOverlay, type SessionProvider, type SessionSummary } from "@/lib/api";
 import { humanBytes, humanTokens } from "@/lib/format";
 import { basename } from "@/lib/cwd";
+import { isSubagentSession } from "@/lib/sessionSource";
 
 export default function SessionsRoute({ provider = "codex" }: { provider?: SessionProvider }) {
   const navigate = useNavigate();
@@ -32,6 +34,8 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
   const clearSelection = useSelection((s) => s.clear);
   const prefillCwd = useView((s) => s.prefillCwd);
   const setPrefill = useView((s) => s.setPrefillCwd);
+  const showSubagentSessions = useView((s) => s.showSubagentSessions);
+  const setShowSubagentSessions = useView((s) => s.setShowSubagentSessions);
 
   const [preview, setPreview] = useState<SessionSummary | null>(null);
   const [backupTargets, setBackupTargets] = useState<SessionSummary[]>([]);
@@ -40,7 +44,7 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
   const [currentProvider, setCurrentProvider] = useState<string | null>(null);
   const [familySheetId, setFamilySheetId] = useState<string | null>(null);
   const [cloning, setCloning] = useState(false);
-  const showBranchRecords = useMemo(() => isExplicitBranchRecordQuery(query), [query]);
+  const showHiddenRecords = useMemo(() => isExplicitHiddenRecordQuery(query), [query]);
   const isCodex = provider === "codex";
 
   const refreshOverlay = useCallback(async () => {
@@ -85,9 +89,18 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
   }, [overlay]);
 
   const visibleSessions = useMemo(() => {
-    if (!isCodex || showBranchRecords) return sessions;
-    return sessions.filter((s) => !isHiddenFamilyBranch(s, overlay.get(s.id)));
-  }, [sessions, overlay, showBranchRecords, isCodex]);
+    const visible: SessionSummary[] = [];
+    for (const session of sessions) {
+      const sessionOverlay = isCodex ? overlay.get(session.id) : undefined;
+      const isSubagent = isSubagentSession(session, sessionOverlay);
+      if (isSubagent !== showSubagentSessions) {
+        continue;
+      }
+      if (isCodex && !showHiddenRecords && isHiddenFamilyBranch(session, sessionOverlay)) continue;
+      visible.push(session);
+    }
+    return visible;
+  }, [sessions, overlay, showHiddenRecords, isCodex, showSubagentSessions]);
 
   useEffect(() => {
     if (selected.size === 0) return;
@@ -230,7 +243,17 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
         onBulkBackup={onBulkBackup}
         onBulkDelete={onBulkDelete}
         showListTools
-      />
+      >
+        <div className="flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 text-xs text-muted-foreground">
+          <Network className="h-3.5 w-3.5" />
+          <span className="hidden whitespace-nowrap md:inline">子代理</span>
+          <Switch
+            checked={showSubagentSessions}
+            onCheckedChange={setShowSubagentSessions}
+            aria-label="显示子代理会话"
+          />
+        </div>
+      </TopBar>
 
       {prefillCwd && (
         <div className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-6 py-2 text-xs">
@@ -283,10 +306,12 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
           </div>
         ) : visibleSessions.length === 0 ? (
           <EmptyState
-            title={query ? "无匹配结果" : "尚无会话"}
+            title={query ? "无匹配结果" : showSubagentSessions ? "尚无子代理会话" : "尚无会话"}
             description={
               query
                 ? "尝试清除搜索或换个关键字"
+                : showSubagentSessions
+                  ? "产生子代理后会自动出现在此"
                 : provider === "codex"
                   ? "打开 Codex 后会自动出现在此"
                   : "打开 Claude Code 后会自动出现在此"
@@ -406,10 +431,11 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
 }
 
 /**
- * 主会话列表只显示家族的"当前分支"（active）。
+ * Codex 主会话列表只显示家族的"当前分支"（active）。
  * - active 分支：照常显示，并带"N 分支"徽标作为历史/恢复入口
- * - 非 active 分支（不论 Scatter 模式下未归档、还是 Continuous 模式下已归档）：默认隐藏
- *   通过显式查询 `id:` / `archived:`、或者点击徽标进入 FamilyHistorySheet 才能找到
+ * - 非 active 分支默认隐藏，通过 `id:` / `archived:` 可直接显示隐藏记录
+ * - 子代理开关关闭时只显示主会话，开启时只显示子代理
+ *   点击分支徽标可进入 FamilyHistorySheet 查看历史分支
  * - 没有 family_id（孤儿会话）：照常显示
  */
 function isHiddenFamilyBranch(_s: SessionSummary, overlay?: FamilyOverlay): boolean {
@@ -417,7 +443,7 @@ function isHiddenFamilyBranch(_s: SessionSummary, overlay?: FamilyOverlay): bool
   return !overlay.is_active_branch;
 }
 
-function isExplicitBranchRecordQuery(query: string): boolean {
+function isExplicitHiddenRecordQuery(query: string): boolean {
   const q = query.trim().toLowerCase();
   return q.startsWith("id:") || q.startsWith("archived:");
 }

@@ -36,7 +36,7 @@ fn query_summaries(
     let rows: Vec<SessionSummary> = stmt
         .query_map(params, |row| {
             let id: String = row.get(0)?;
-            let rollout_path: String = row.get(1)?;
+            let rollout_path_raw: String = row.get(1)?;
             let cwd_raw: String = row.get(2)?;
             let title: String = row.get(3)?;
             let first_user_message: String = row.get(4)?;
@@ -51,8 +51,10 @@ fn query_summaries(
             let agent_nickname: Option<String> = row.get(13)?;
             let agent_role: Option<String> = row.get(14)?;
 
-            let cwd = paths::strip_verbatim(&cwd_raw);
-            let cwd_display = paths::basename_display(&cwd_raw);
+            let rollout_path =
+                paths::host_path_string_from_codex_record(codex_dir, &rollout_path_raw);
+            let cwd = paths::host_path_string_from_codex_record(codex_dir, &cwd_raw);
+            let cwd_display = paths::basename_display(&cwd);
 
             let rollout_bytes = fs::metadata(&rollout_path).map(|m| m.len()).unwrap_or(0);
 
@@ -185,8 +187,9 @@ pub fn search_sessions(
 
     // 前缀/过滤：id: cwd: model: archived:
     let (key, val) = if let Some((k, v)) = q.split_once(':') {
-        if matches!(k, "id" | "cwd" | "model" | "archived") {
-            (Some(k.to_string()), v.trim().to_lowercase())
+        let key = k.trim().to_lowercase();
+        if matches!(key.as_str(), "id" | "cwd" | "model" | "archived") {
+            (Some(key), v.trim().to_lowercase())
         } else {
             (None, low.clone())
         }
@@ -233,6 +236,18 @@ pub fn search_sessions(
         })
         .collect();
     Ok(hits)
+}
+
+pub fn session_is_subagent(session: &SessionSummary) -> bool {
+    crate::repair::is_subagent_source(session.source.as_deref())
+        || session
+            .agent_nickname
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+        || session
+            .agent_role
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

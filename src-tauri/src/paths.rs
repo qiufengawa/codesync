@@ -22,6 +22,61 @@ pub fn basename_display(s: &str) -> String {
         .unwrap_or_else(|| stripped.clone())
 }
 
+pub fn is_wsl_unc_path(path: &Path) -> bool {
+    wsl_unc_mapping(path).is_some()
+}
+
+/// Map Linux absolute paths stored by Codex inside WSL back to the selected
+/// Windows-accessible WSL UNC root. Non-WSL and non-Linux paths are unchanged.
+pub fn host_path_from_codex_record(codex_dir: &Path, raw: &str) -> PathBuf {
+    let cleaned = strip_verbatim(raw.trim());
+    if cleaned.starts_with('/') {
+        if let Some(mapping) = wsl_unc_mapping(codex_dir) {
+            return mapping.host_path_for_linux_path(&cleaned);
+        }
+    }
+    PathBuf::from(cleaned)
+}
+
+pub fn host_path_string_from_codex_record(codex_dir: &Path, raw: &str) -> String {
+    host_path_from_codex_record(codex_dir, raw)
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WslUncMapping {
+    unc_root: String,
+}
+
+impl WslUncMapping {
+    fn host_path_for_linux_path(&self, linux_path: &str) -> PathBuf {
+        let mut out = self.unc_root.clone();
+        for segment in linux_path.trim_start_matches('/').split('/') {
+            if !segment.is_empty() {
+                out.push('\\');
+                out.push_str(segment);
+            }
+        }
+        PathBuf::from(out)
+    }
+}
+
+fn wsl_unc_mapping(path: &Path) -> Option<WslUncMapping> {
+    let raw = strip_verbatim(&path.to_string_lossy());
+    let normalized = raw.replace('/', "\\");
+    let rest = normalized.strip_prefix(r"\\")?;
+    let mut parts = rest.split('\\').filter(|part| !part.is_empty());
+    let server = parts.next()?;
+    if !server.eq_ignore_ascii_case("wsl.localhost") && !server.eq_ignore_ascii_case("wsl$") {
+        return None;
+    }
+    let distro = parts.next()?;
+    Some(WslUncMapping {
+        unc_root: format!(r"\\{}\{}", server, distro),
+    })
+}
+
 pub fn default_codex_dir() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(".codex"))
@@ -186,4 +241,37 @@ pub fn checked_relative_path(raw: &str) -> AppResult<PathBuf> {
         return Err(AppError::Path(format!("相对路径无有效片段: {raw}")));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_linux_paths_under_wsl_unc_root() {
+        let codex = Path::new(r"\\wsl.localhost\Ubuntu\home\alice\.codex");
+        let mapped =
+            host_path_string_from_codex_record(codex, "/home/alice/.codex/sessions/a.jsonl");
+
+        assert_eq!(
+            mapped,
+            r"\\wsl.localhost\Ubuntu\home\alice\.codex\sessions\a.jsonl"
+        );
+    }
+
+    #[test]
+    fn maps_linux_paths_under_wsl_dollar_unc_root() {
+        let codex = Path::new(r"\\wsl$\Ubuntu\home\alice\.codex");
+        let mapped = host_path_string_from_codex_record(codex, "/home/alice/project");
+
+        assert_eq!(mapped, r"\\wsl$\Ubuntu\home\alice\project");
+    }
+
+    #[test]
+    fn leaves_non_wsl_linux_paths_unchanged() {
+        let codex = Path::new(r"C:\Users\alice\.codex");
+        let mapped = host_path_string_from_codex_record(codex, "/home/alice/.codex/a.jsonl");
+
+        assert_eq!(mapped, r"/home/alice/.codex/a.jsonl");
+    }
 }

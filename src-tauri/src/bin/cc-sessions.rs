@@ -69,6 +69,12 @@ enum SessionSort {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionScope {
+    Main,
+    Subagent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewMode {
     Conversation,
     ConversationAndReasoning,
@@ -161,9 +167,9 @@ fn print_help() {
   -h, --help                显示帮助
 
 常用命令:
-  list [--archived] [--limit N] [--sort time|size]
-  search <关键词> [--sort time|size]
-  projects [--archived]
+  list [--archived] [--limit N] [--sort time|size] [--subagent]
+  search <关键词> [--sort time|size] [--subagent]
+  projects [--archived] [--subagent]
   preview <rollout路径> [--offset N] [--limit N] [--mode conversation|reasoning|all]
   meta <rollout路径>
   resume-command <session-id>
@@ -178,8 +184,12 @@ fn print_help() {
 示例:
   cc-sessions
   cc-sessions menu
+  # 推荐先使用 menu；需要脚本化或 JSON 输出时再使用下面这些子命令
   cc-sessions list --limit 20 --sort size
+  cc-sessions list --subagent --sort time
   cc-sessions --provider claude search "hello"
+  cc-sessions --provider claude projects --subagent
+  cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
   cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
   cc-sessions repair diagnose --json
   cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
@@ -189,6 +199,7 @@ fn print_help() {
 
 fn cmd_list(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
+    let scope = take_session_scope(&mut args);
     let limit = take_usize(&mut args, "--limit")?.unwrap_or(usize::MAX);
     let sort = parse_session_sort(take_value(&mut args, "--sort")?)?;
     ensure_no_args(&args)?;
@@ -197,6 +208,7 @@ fn cmd_list(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     if !include_archived {
         list.retain(|session| !session.archived);
     }
+    retain_session_scope(&mut list, scope);
     sort_sessions(&mut list, sort);
     list.truncate(limit);
     output(ctx, &list, print_sessions)
@@ -204,6 +216,7 @@ fn cmd_list(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
 
 fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
+    let scope = take_session_scope(&mut args);
     let sort = parse_session_sort(take_value(&mut args, "--sort")?)?;
     let query = take_value(&mut args, "--query")?.unwrap_or_else(|| args.join(" "));
     if query.trim().is_empty() {
@@ -237,15 +250,18 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     if !include_archived {
         hits.retain(|session| !session.archived);
     }
+    retain_session_scope(&mut hits, scope);
     sort_sessions(&mut hits, sort);
     output(ctx, &hits, print_sessions)
 }
 
 fn cmd_projects(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
+    let scope = take_session_scope(&mut args);
     ensure_no_args(&args)?;
 
-    let list = load_sessions(ctx, session_provider(ctx)?)?;
+    let mut list = load_sessions(ctx, session_provider(ctx)?)?;
+    retain_session_scope(&mut list, scope);
     let groups = group_projects(list, include_archived);
     output(ctx, &groups, print_project_groups)
 }
@@ -351,7 +367,13 @@ fn cmd_resume_command(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> 
     let id = take_value(&mut args, "--id")?.or_else(|| pop_command(&mut args));
     ensure_no_args(&args)?;
     let id = required(id, "resume-command 需要 session id")?;
-    let command = fs_ops::resume_command_text(Some(concrete_provider(ctx)?), id)?;
+    let provider = concrete_provider(ctx)?;
+    let command = load_sessions(ctx, provider.clone())?
+        .into_iter()
+        .find(|session| session.id == id)
+        .map(|session| session.resume_command)
+        .map(Ok)
+        .unwrap_or_else(|| fs_ops::resume_command_text(Some(provider), id))?;
     output(ctx, &command, |command| println!("{command}"))
 }
 
@@ -1193,6 +1215,13 @@ fn load_sessions(ctx: &CliContext, provider: String) -> CliResult<Vec<SessionSum
     }
 }
 
+fn retain_session_scope(list: &mut Vec<SessionSummary>, scope: SessionScope) {
+    list.retain(|session| match scope {
+        SessionScope::Main => !sessions::session_is_subagent(session),
+        SessionScope::Subagent => sessions::session_is_subagent(session),
+    });
+}
+
 fn sort_sessions(list: &mut [SessionSummary], sort: SessionSort) {
     match sort {
         SessionSort::Time => {
@@ -1279,6 +1308,14 @@ fn parse_session_sort(value: Option<String>) -> CliResult<SessionSort> {
         other => Err(CliError::message(format!(
             "不支持的 sort: {other}，可用值: time, size"
         ))),
+    }
+}
+
+fn take_session_scope(args: &mut Vec<String>) -> SessionScope {
+    if take_flag(args, "--subagent") || take_flag(args, "--subagents") {
+        SessionScope::Subagent
+    } else {
+        SessionScope::Main
     }
 }
 

@@ -400,12 +400,12 @@ fn load_backup_thread(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let rollout_path_clean = paths::strip_verbatim(&rollout_path_raw);
-    let rollout_relpath = rel_path(&rollout_path_clean, codex)?;
+    let rollout_path = paths::host_path_from_codex_record(codex, &rollout_path_raw);
+    let rollout_relpath = rel_path(&rollout_path.to_string_lossy(), codex)?;
 
     Ok(BackupThread {
         id: id.to_string(),
-        rollout_path: PathBuf::from(rollout_path_clean),
+        rollout_path,
         rollout_relpath,
         title: row_json
             .get("title")

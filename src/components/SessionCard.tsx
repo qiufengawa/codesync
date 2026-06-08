@@ -34,6 +34,7 @@ import {
   relativeTime,
   shortId,
 } from "@/lib/format";
+import { isSubagentSession } from "@/lib/sessionSource";
 import { sessionDisplayPreview, sessionDisplayTitle } from "@/lib/sessionText";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +76,9 @@ export const SessionCard = memo(function SessionCard({
   const displayTitle = sessionDisplayTitle(s.title, s.first_user_message);
   const displayFirstUserMessage = sessionDisplayPreview(s.first_user_message);
   const syncAction = syncActionLabel(overlay?.clone_state, currentProvider);
-  const subagent = subagentLabel(s, overlay);
+  const isSubagent = isSubagentSession(s, overlay);
+  const subagent = subagentLabel(s, isSubagent);
+  const canCopyResume = !(s.provider === "claude" && isSubagent);
 
   return (
     <div
@@ -235,10 +238,12 @@ export const SessionCard = memo(function SessionCard({
               <Eye className="h-3.5 w-3.5" />
               预览
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => onCopyResume(s)} className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
-              <Copy className="h-3.5 w-3.5" />
-              resume
-            </Button>
+            {canCopyResume && (
+              <Button variant="ghost" size="sm" onClick={() => onCopyResume(s)} className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
+                <Copy className="h-3.5 w-3.5" />
+                resume
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => onRevealCwd(s)} className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
               <FolderOpen className="h-3.5 w-3.5" />
               打开目录
@@ -344,35 +349,20 @@ function syncActionLabel(cloneState: string | undefined, currentProvider: string
 
 function subagentLabel(
   s: SessionSummary,
-  overlay: FamilyOverlay | undefined,
+  isSubagent: boolean,
 ): { label: string; title: string } | null {
-  if (
-    overlay?.clone_state !== "subagent" &&
-    !s.agent_nickname &&
-    !s.agent_role &&
-    !isSubagentSource(s.source)
-  ) {
+  if (!isSubagent) {
     return null;
   }
   const role = s.agent_role?.trim();
   const nickname = s.agent_nickname?.trim();
+  const providerLabel = s.provider === "claude" ? "Claude" : "Codex";
   return {
     label: role ? `子代理 · ${role}` : "子代理",
     title: nickname
-      ? `Codex 子代理线程：${nickname}${role ? `（${role}）` : ""}`
+      ? `${providerLabel} 子代理线程：${nickname}${role ? `（${role}）` : ""}`
       : role
-        ? `Codex 子代理线程：${role}`
-        : "Codex 子代理线程",
+        ? `${providerLabel} 子代理线程：${role}`
+        : `${providerLabel} 子代理线程`,
   };
-}
-
-function isSubagentSource(source: string | null | undefined): boolean {
-  if (!source) return false;
-  if (source.trim().toLowerCase() === "subagent") return true;
-  try {
-    const parsed = JSON.parse(source);
-    return !!parsed && typeof parsed === "object" && "subagent" in parsed;
-  } catch {
-    return false;
-  }
 }

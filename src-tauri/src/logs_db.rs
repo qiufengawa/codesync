@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
 
 use crate::error::AppResult;
+use crate::state_db::ReadOnlyConnection;
 
 pub fn open(codex_dir: &Path) -> AppResult<Connection> {
     let conn = Connection::open_with_flags(
@@ -13,12 +14,8 @@ pub fn open(codex_dir: &Path) -> AppResult<Connection> {
     Ok(conn)
 }
 
-pub fn open_ro(codex_dir: &Path) -> AppResult<Connection> {
-    let conn = Connection::open_with_flags(
-        codex_dir.join("logs_2.sqlite"),
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    Ok(conn)
+pub fn open_ro(codex_dir: &Path) -> AppResult<ReadOnlyConnection> {
+    crate::state_db::open_ro_db(codex_dir, "logs_2.sqlite")
 }
 
 #[allow(dead_code)]

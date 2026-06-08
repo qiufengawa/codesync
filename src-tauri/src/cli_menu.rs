@@ -6,7 +6,7 @@ use cc_session_manager_lib::models::{
     SessionSummary, SwitchStrategy,
 };
 use cc_session_manager_lib::{
-    backup, bundle, family, fs_ops, paths, repair, rollout, sessions, settings, stats,
+    backup, bundle, family, paths, repair, rollout, sessions, settings, stats,
 };
 
 type MenuResult<T> = Result<T, String>;
@@ -24,6 +24,13 @@ enum Flow {
 enum PreviewMode {
     Conversation,
     ConversationAndReasoning,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionScope {
+    Main,
+    Subagent,
     All,
 }
 
@@ -114,7 +121,8 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
         match prompt("请选择: ")?.as_str() {
             "1" => {
                 let include_archived = confirm_default_no("是否包含已归档会话？")?;
-                let sessions = load_sessions(ctx, provider, include_archived)?;
+                let scope = prompt_session_scope()?;
+                let sessions = load_sessions(ctx, provider, include_archived, scope)?;
                 match browse_sessions(ctx, provider, sessions, "会话列表")? {
                     Flow::Back => {}
                     other => return Ok(other),
@@ -123,6 +131,7 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
             "2" => {
                 let query = prompt_required("请输入搜索关键词: ")?;
                 let include_archived = confirm_default_no("是否包含已归档会话？")?;
+                let scope = prompt_session_scope()?;
                 let mut hits = sessions::search_sessions(
                     Some(provider.to_string()),
                     ctx.codex_dir.clone(),
@@ -133,6 +142,7 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
                 if !include_archived {
                     hits.retain(|session| !session.archived);
                 }
+                retain_session_scope(&mut hits, scope);
                 match browse_sessions(ctx, provider, hits, "搜索结果")? {
                     Flow::Back => {}
                     other => return Ok(other),
@@ -144,7 +154,8 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
             },
             "4" => {
                 let include_archived = confirm_default_no("是否包含已归档会话？")?;
-                let mut sessions = load_sessions(ctx, provider, include_archived)?;
+                let scope = prompt_session_scope()?;
+                let mut sessions = load_sessions(ctx, provider, include_archived, scope)?;
                 sort_sessions_by_size(&mut sessions);
                 match browse_sessions(ctx, provider, sessions, "按大小：token 从小到大")? {
                     Flow::Back => {}
@@ -153,7 +164,7 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
             }
             "5" => {
                 let id = prompt_required("请输入 session id 或前缀: ")?;
-                let sessions = load_sessions(ctx, provider, true)?;
+                let sessions = load_sessions(ctx, provider, true, SessionScope::All)?;
                 match find_session(&sessions, &id) {
                     Ok(session) => match session_action_menu(ctx, provider, session)? {
                         Flow::Back => {}
@@ -178,7 +189,8 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
 
 fn projects_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
     let include_archived = confirm_default_no("是否包含已归档会话？")?;
-    let sessions = load_sessions(ctx, provider, include_archived)?;
+    let scope = prompt_session_scope()?;
+    let sessions = load_sessions(ctx, provider, include_archived, scope)?;
     let projects = group_projects(sessions);
     if projects.is_empty() {
         println!("没有可显示的项目。");
@@ -571,10 +583,8 @@ fn show_session_meta(provider: &str, session: &SessionSummary) -> MenuResult<()>
     Ok(())
 }
 
-fn show_resume_command(provider: &str, session: &SessionSummary) -> MenuResult<()> {
-    let command = fs_ops::resume_command_text(Some(provider.to_string()), session.id.clone())
-        .map_err(to_string)?;
-    println!("{command}");
+fn show_resume_command(_provider: &str, session: &SessionSummary) -> MenuResult<()> {
+    println!("{}", session.resume_command);
     pause()?;
     Ok(())
 }
@@ -1695,6 +1705,7 @@ fn show_interactive_help() -> MenuResult<()> {
     println!("输入菜单序号即可进入下一层，例如 1 进入 Codex 会话。");
     println!("列表页支持 n 下一页、p 上一页、b 返回上一层、m 返回主菜单、0 退出。");
     println!("列表页支持 s 多选当前页序号、u 取消选择、c 清空选择、d 删除已选会话。");
+    println!("会话列表默认显示主会话，选择子代理范围后只显示子代理会话。");
     println!("会话预览默认只显示用户和助手消息；选择“全部事件”才会显示工具调用。");
     println!("删除、覆盖恢复、清理和分支切换等危险操作需要输入 yes 确认。");
     println!("脚本用法仍然保留，例如 cc-sessions list --limit 20。");
@@ -1705,6 +1716,7 @@ fn load_sessions(
     ctx: &MenuContext,
     provider: &str,
     include_archived: bool,
+    scope: SessionScope,
 ) -> MenuResult<Vec<SessionSummary>> {
     let mut list = sessions::list_sessions(
         Some(provider.to_string()),
@@ -1715,7 +1727,24 @@ fn load_sessions(
     if !include_archived {
         list.retain(|session| !session.archived);
     }
+    retain_session_scope(&mut list, scope);
     Ok(list)
+}
+
+fn prompt_session_scope() -> MenuResult<SessionScope> {
+    if confirm_default_no("是否只查看子代理会话？")? {
+        Ok(SessionScope::Subagent)
+    } else {
+        Ok(SessionScope::Main)
+    }
+}
+
+fn retain_session_scope(list: &mut Vec<SessionSummary>, scope: SessionScope) {
+    match scope {
+        SessionScope::Main => list.retain(|session| !sessions::session_is_subagent(session)),
+        SessionScope::Subagent => list.retain(sessions::session_is_subagent),
+        SessionScope::All => {}
+    }
 }
 
 fn group_projects(sessions: Vec<SessionSummary>) -> Vec<ProjectGroup> {

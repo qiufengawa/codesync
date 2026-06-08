@@ -2032,7 +2032,7 @@ fn resolve_fork_source_rollout(
     session_id: &str,
     rollout_path: &str,
 ) -> AppResult<(PathBuf, RolloutBrief)> {
-    let supplied = PathBuf::from(rollout_path);
+    let supplied = paths::host_path_from_codex_record(codex, rollout_path);
     let source = if supplied.is_absolute() {
         supplied
     } else {

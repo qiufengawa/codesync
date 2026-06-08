@@ -11,6 +11,7 @@ use crate::models::{PreviewEvent, SessionMetaBrief, SessionSummary};
 use crate::paths;
 
 const PROVIDER: &str = "claude";
+const SUBAGENT_SOURCE: &str = "subagent";
 const TITLE_MAX_CHARS: usize = 80;
 
 pub fn scan_sessions(claude_dir: &Path) -> AppResult<Vec<SessionSummary>> {
@@ -62,6 +63,8 @@ pub fn preview_range(path: &str, offset: usize, limit: usize) -> AppResult<Vec<P
 pub fn preview_meta(path: &str) -> AppResult<SessionMetaBrief> {
     let f = File::open(PathBuf::from(path))?;
     let reader = BufReader::new(f);
+    let path_ref = Path::new(path);
+    let is_subagent = is_agent_session(path_ref);
     for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -69,11 +72,14 @@ pub fn preview_meta(path: &str) -> AppResult<SessionMetaBrief> {
         }
         let raw: Value = serde_json::from_str(&line)?;
         return Ok(SessionMetaBrief {
-            id: raw
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .map(String::from)
-                .or_else(|| infer_session_id_from_filename(Path::new(path))),
+            id: if is_subagent {
+                infer_session_id_from_filename(path_ref)
+            } else {
+                raw.get("sessionId")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+                    .or_else(|| infer_session_id_from_filename(path_ref))
+            },
             timestamp: raw
                 .get("timestamp")
                 .and_then(Value::as_str)
@@ -81,7 +87,14 @@ pub fn preview_meta(path: &str) -> AppResult<SessionMetaBrief> {
             cwd: raw.get("cwd").and_then(Value::as_str).map(String::from),
             originator: None,
             cli_version: raw.get("version").and_then(Value::as_str).map(String::from),
-            source: Some(PROVIDER.to_string()),
+            source: Some(
+                if is_subagent {
+                    SUBAGENT_SOURCE
+                } else {
+                    PROVIDER
+                }
+                .to_string(),
+            ),
             model_provider: Some(PROVIDER.to_string()),
         });
     }
@@ -91,7 +104,14 @@ pub fn preview_meta(path: &str) -> AppResult<SessionMetaBrief> {
         cwd: None,
         originator: None,
         cli_version: None,
-        source: Some(PROVIDER.to_string()),
+        source: Some(
+            if is_subagent {
+                SUBAGENT_SOURCE
+            } else {
+                PROVIDER
+            }
+            .to_string(),
+        ),
         model_provider: Some(PROVIDER.to_string()),
     })
 }
@@ -115,13 +135,12 @@ pub fn sidecar_path_for(source_path: &Path) -> Option<PathBuf> {
 }
 
 fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
-    if is_agent_session(path) {
-        return Ok(None);
-    }
-
+    let is_subagent = is_agent_session(path);
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut session_id: Option<String> = None;
+    let mut agent_id = infer_agent_id_from_filename(path);
+    let mut agent_role: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut updated_at: Option<i64> = None;
@@ -151,6 +170,15 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
                 .get("sessionId")
                 .and_then(Value::as_str)
                 .map(String::from);
+        }
+        if is_subagent {
+            if agent_id.is_none() {
+                agent_id = string_field(&value, "agentId");
+            }
+            assign_if_some(
+                &mut agent_role,
+                first_string_field(&value, &["attributionAgent", "attributionSkill"]),
+            );
         }
         if cwd.is_none() {
             cwd = value.get("cwd").and_then(Value::as_str).map(String::from);
@@ -204,16 +232,16 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
             let is_user = event_type == "user" || role == "user";
             let is_meta = value.get("isMeta").and_then(Value::as_bool) == Some(true);
             let is_sidechain = value.get("isSidechain").and_then(Value::as_bool) == Some(true);
+            let visible_message = !is_meta && (is_subagent || !is_sidechain);
             if first_user_message.is_none()
                 && is_user
-                && !is_meta
-                && !is_sidechain
+                && visible_message
                 && !trimmed.is_empty()
                 && !is_generated_user_prompt(trimmed)
             {
                 first_user_message = Some(trimmed.to_string());
             }
-            if !is_meta && !is_sidechain && !trimmed.is_empty() {
+            if visible_message && !trimmed.is_empty() {
                 tail_summary = Some(trimmed.to_string());
             }
             if is_user {
@@ -224,7 +252,12 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
         }
     }
 
-    let id = session_id.or_else(|| infer_session_id_from_filename(path));
+    let parent_session_id = session_id.clone();
+    let id = if is_subagent {
+        infer_session_id_from_filename(path)
+    } else {
+        session_id.or_else(|| infer_session_id_from_filename(path))
+    };
     let Some(id) = id else {
         return Ok(None);
     };
@@ -250,9 +283,13 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
         first_user_message: first_user_message.unwrap_or_default(),
         model,
         reasoning_effort,
-        source: None,
-        agent_nickname: None,
-        agent_role: None,
+        source: if is_subagent {
+            Some(SUBAGENT_SOURCE.to_string())
+        } else {
+            None
+        },
+        agent_nickname: if is_subagent { agent_id } else { None },
+        agent_role: if is_subagent { agent_role } else { None },
         tokens_used,
         created_at: created_at.unwrap_or(0),
         updated_at: updated_at.or(created_at).unwrap_or(0),
@@ -261,7 +298,14 @@ fn parse_session(path: &Path) -> AppResult<Option<SessionSummary>> {
         rollout_bytes: bytes,
         logs_count: 0,
         has_backup: false,
-        resume_command: format!("claude --resume {id}"),
+        resume_command: format!(
+            "claude --resume {}",
+            if is_subagent {
+                parent_session_id.as_deref().unwrap_or(&id)
+            } else {
+                id.as_str()
+            }
+        ),
     }))
 }
 
@@ -369,6 +413,13 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) -> AppResult<()> {
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
+        .map(String::from)
+}
+
+fn infer_agent_id_from_filename(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.strip_prefix("agent-"))
         .map(String::from)
 }
 
@@ -785,6 +836,47 @@ mod tests {
         Ok(file)
     }
 
+    fn write_agent_session(claude: &Path) -> AppResult<PathBuf> {
+        let session_dir = claude
+            .join("projects")
+            .join("sample-project")
+            .join("parent-session")
+            .join("subagents");
+        fs::create_dir_all(&session_dir)?;
+        let file = session_dir.join("agent-aabbccddeeff0011.jsonl");
+        let mut out = File::create(&file)?;
+        for value in [
+            serde_json::json!({
+                "sessionId": "parent-session",
+                "agentId": "aabbccddeeff0011",
+                "attributionAgent": "general-purpose",
+                "cwd": "F:\\work\\sample-project",
+                "timestamp": "2026-04-20T10:00:00Z",
+                "type": "user",
+                "isSidechain": true,
+                "message": {"role": "user", "content": "inspect this subsystem"}
+            }),
+            serde_json::json!({
+                "sessionId": "parent-session",
+                "agentId": "aabbccddeeff0011",
+                "attributionAgent": "general-purpose",
+                "cwd": "F:\\work\\sample-project",
+                "timestamp": "2026-04-20T10:00:10Z",
+                "type": "assistant",
+                "isSidechain": true,
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-3-5-sonnet",
+                    "usage": {"input_tokens": 4, "output_tokens": 6},
+                    "content": "subagent result"
+                }
+            }),
+        ] {
+            writeln!(out, "{}", serde_json::to_string(&value)?)?;
+        }
+        Ok(file)
+    }
+
     #[test]
     fn skips_slash_command_wrapper_in_first_user_message() {
         let raw = "<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args>max</command-args>";
@@ -902,6 +994,31 @@ mod tests {
         let events = preview_range(&file.to_string_lossy(), 0, 10)?;
         fs::remove_dir_all(&claude).ok();
         assert!(events.iter().any(|event| event.role == "tool_result"));
+        Ok(())
+    }
+
+    #[test]
+    fn scans_claude_agent_jsonl_as_subagent_session() -> AppResult<()> {
+        let claude = temp_dir("cc-session-manager-claude-subagent-scan-test");
+        let file = write_agent_session(&claude)?;
+
+        let sessions = scan_sessions(&claude)?;
+
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.provider, PROVIDER);
+        assert_eq!(session.id, "agent-aabbccddeeff0011");
+        assert_eq!(session.source.as_deref(), Some(SUBAGENT_SOURCE));
+        assert_eq!(session.agent_nickname.as_deref(), Some("aabbccddeeff0011"));
+        assert_eq!(session.agent_role.as_deref(), Some("general-purpose"));
+        assert_eq!(session.first_user_message, "inspect this subsystem");
+        assert_eq!(session.title, "inspect this subsystem");
+        assert_eq!(session.tokens_used, 10);
+        assert_eq!(session.resume_command, "claude --resume parent-session");
+
+        let events = preview_range(&file.to_string_lossy(), 0, 10)?;
+        fs::remove_dir_all(&claude).ok();
+        assert!(events.iter().any(|event| event.role == "assistant"));
         Ok(())
     }
 

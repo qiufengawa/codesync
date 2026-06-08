@@ -91,7 +91,7 @@ src-tauri/target/release/cc-sessions
 
 Windows 下文件名为 `cc-sessions.exe`。
 
-推荐先使用交互式菜单。直接运行 CLI 不带子命令时会进入菜单模式：
+推荐优先使用交互式菜单。菜单会用序号逐层引导会话列表、搜索、项目分组、预览、备份、导入导出、修复诊断等常用操作，比直接记子命令更适合日常使用。直接运行 CLI 不带子命令时会进入菜单模式：
 
 ```bash
 npm run cli:run
@@ -105,6 +105,8 @@ Windows release 版构建后可直接运行：
 
 进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。列表页还支持 `s` 选择多个当前页序号、`u` 取消选择、`c` 清空选择、`d` 删除已选会话；选择序号可以用空格或逗号分隔，也支持 `1-3` 这种范围。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
 
+菜单中的 Codex / Claude 会话入口默认显示主会话；查看列表、搜索、按项目查看和按大小查看时，可以选择“只查看子代理会话”，这样子代理也能继续使用同一套分页、项目分组和排序能力。
+
 交互菜单里的“预览会话内容”默认只显示 Codex / Claude Code 应用中可见的用户消息和助手消息，不显示工具调用、工具返回、元数据，也会过滤 Codex 注入的 AGENTS 指令和环境上下文。如需排查完整 JSONL 事件流，可在预览模式中选择“全部事件”。
 
 需要脚本化或机器可读输出时，再使用子命令：
@@ -114,13 +116,21 @@ cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-se
 cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions -- --json repair diagnose
 ```
 
-常用脚本化命令：
+推荐入口：
 
 ```bash
 cc-sessions
 cc-sessions menu
+```
+
+常用脚本化命令：
+
+```bash
 cc-sessions list --limit 20 --sort size
+cc-sessions list --subagent --sort time
 cc-sessions --provider claude search "关键词"
+cc-sessions --provider claude projects --subagent
+cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
 cc-sessions projects --archived
 cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
 cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
@@ -130,7 +140,7 @@ cc-sessions repair index --dry-run
 cc-sessions bundle export --out-dir ./bundles --id <session-id>
 ```
 
-默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
+默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖；Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
 
 ### CLI 修复项说明
 

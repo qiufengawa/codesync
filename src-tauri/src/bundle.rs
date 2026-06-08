@@ -147,7 +147,7 @@ fn rollout_source_from_state(
     let Some(rollout_path) = rollout_path else {
         return Ok(None);
     };
-    let abs = PathBuf::from(paths::strip_verbatim(&rollout_path));
+    let abs = paths::host_path_from_codex_record(codex, &rollout_path);
     if !abs.is_file() {
         return Err(AppError::NotFound(format!(
             "threads.rollout_path 指向的文件不存在: {}",
@@ -234,7 +234,7 @@ fn export_session_bundles_from_index(
             id,
             &machine,
             &group,
-            state_conn.as_ref(),
+            state_conn.as_deref(),
             rollout_index,
             &history_index,
         );
