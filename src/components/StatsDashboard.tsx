@@ -157,10 +157,10 @@ export function StatsDashboard() {
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={ts.map((t) => ({ ...t, label: formatBucket(t.bucket_start, bucket) }))}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="label" fontSize={11} />
-                <YAxis fontSize={11} allowDecimals={false} />
-                <RTooltip />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="label" fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <YAxis fontSize={11} allowDecimals={false} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <RTooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "6px" }} labelStyle={{ color: "hsl(var(--popover-foreground))" }} />
                 <Line type="monotone" dataKey="sessions" stroke={chartColors[0]} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -174,10 +174,10 @@ export function StatsDashboard() {
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={ts.map((t) => ({ ...t, label: formatBucket(t.bucket_start, bucket) }))}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="label" fontSize={11} />
-                <YAxis fontSize={11} tickFormatter={(v) => humanTokens(Number(v))} />
-                <RTooltip formatter={(v: number) => humanTokens(v)} />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="label" fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <YAxis fontSize={11} tickFormatter={(v) => humanTokens(Number(v))} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <RTooltip formatter={(v: number) => humanTokens(v)} contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "6px" }} labelStyle={{ color: "hsl(var(--popover-foreground))" }} />
                 <Area type="monotone" dataKey="tokens" stroke={chartColors[1]} fill={chartColors[1]} fillOpacity={0.25} />
               </AreaChart>
             </ResponsiveContainer>
@@ -258,15 +258,19 @@ function ProjectTopCard({
       <CardContent className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={sorted} layout="vertical" margin={{ left: 12, right: 12 }}>
-            <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
             <XAxis
               type="number"
               fontSize={11}
               tickFormatter={kind === "tokens" ? (v) => humanTokens(Number(v)) : undefined}
+              tick={{ fill: "hsl(var(--muted-foreground))" }}
             />
-            <YAxis type="category" dataKey="label" fontSize={11} width={130} />
+            <YAxis type="category" dataKey="label" fontSize={11} width={130} tick={{ fill: "hsl(var(--muted-foreground))" }} />
             <RTooltip
               formatter={(v: number) => (kind === "tokens" ? humanTokens(v) : v)}
+              cursor={{ fill: "hsl(var(--muted))", fillOpacity: 0.6 }}
+              contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "6px" }}
+              labelStyle={{ color: "hsl(var(--popover-foreground))" }}
             />
             <Bar
               dataKey={kind}
@@ -315,6 +319,7 @@ function ModelDistCard({ data }: { data: ModelStat[] }) {
                     innerRadius={38}
                     outerRadius={70}
                     paddingAngle={2}
+                    stroke="none"
                   >
                     {data.map((_, i) => (
                       <Cell key={i} fill={chartColors[i % chartColors.length]} />
@@ -322,6 +327,8 @@ function ModelDistCard({ data }: { data: ModelStat[] }) {
                   </Pie>
                   <RTooltip
                     formatter={(v: number, name: string) => [`${v} 条`, name]}
+                    contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "6px" }}
+                    itemStyle={{ color: "hsl(var(--popover-foreground))" }}
                   />
                 </PieChart>
               </ResponsiveContainer>
