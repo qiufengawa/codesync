@@ -132,15 +132,52 @@ cc-sessions --provider claude search "关键词"
 cc-sessions --provider claude projects --subagent
 cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
 cc-sessions projects --archived
+cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
 cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
 cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
+cc-sessions webui --host 127.0.0.1 --port 17888
+cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
 cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
 cc-sessions repair diagnose --json
 cc-sessions repair index --dry-run
 cc-sessions bundle export --out-dir ./bundles --id <session-id>
 ```
 
-默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖；Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
+默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖；Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，输出完整正文；`--summary` 可切回一行摘要，`--raw` 输出原始 JSONL，`--all` 或 `--limit 0` 会一直读取到文件末尾。如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
+
+### CLI Web UI
+
+无桌面环境也可以启动一个内置 Web UI：
+
+```bash
+cc-sessions webui --host 127.0.0.1 --port 17888
+```
+
+默认绑定 `127.0.0.1`，只监听本机回环地址，适合 WSL、服务器和 SSH 环境。启动时会生成一次性 API token，并注入到本次返回的 Web 页面；浏览器后续调用本地 API 时必须带上该 token，请求没有 token 或 token 不匹配会被拒绝。
+
+Web UI 的设置会持久化。官方 CLI 便携包内包含 `cc-sessions.portable` 标记文件，因此配置会写到 `cc-sessions` 可执行文件同目录下的 `cc-sessions-webui-settings.json`。安装版或没有该标记的自定义构建会写到系统用户配置目录下的 `cc-sessions/cc-sessions-webui-settings.json`，避免安装目录不可写。需要指定确切位置时，可以设置环境变量 `CC_SESSIONS_WEBUI_SETTINGS` 指向目标 JSON 文件。首次启动会创建配置文件；之后页面里保存的路径会继续沿用。只有在启动命令显式传入 `--codex-dir` 或 `--claude-dir` 时，才会用命令行路径覆盖并写回配置。若配置文件所在目录不可写，保存会直接报错。
+
+`--provider codex|claude` 会决定打开根路径 `/` 时默认进入哪一组页面，例如：
+
+```bash
+cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
+```
+
+WSL2 中启动后，Windows 宿主机通常可以直接打开 `http://localhost:17888` 访问；如果本机 localhost 转发不可用，可以在 WSL 内查看 IP：
+
+```bash
+hostname -I
+```
+
+然后显式绑定所有网卡：
+
+```bash
+cc-sessions webui --host 0.0.0.0 --port 17888
+```
+
+绑定 `0.0.0.0` 可能让局域网内其他设备访问此服务。该 Web UI 没有账号登录，只有在你明确需要宿主机或其他设备通过 WSL IP 访问时才应使用。
+
+浏览器版 Web UI 复用桌面端页面。涉及选择目录、选择 zip 或保存 zip 的入口，在桌面端仍会打开系统对话框；在普通浏览器里会要求手动输入路径。这个路径以运行 `cc-sessions webui` 的环境为准，例如在 WSL 内启动时应填写 WSL 内可访问的路径。
 
 ### CLI 修复项说明
 

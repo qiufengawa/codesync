@@ -12,7 +12,6 @@ import {
   ShieldAlert,
   Upload,
 } from "lucide-react";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 
 import { TopBar } from "@/components/TopBar";
@@ -47,6 +46,8 @@ import {
   type ProjectPathMapping,
   type SessionProvider,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
+import { pickDirectoryPath, pickFilePath, saveFilePath } from "@/lib/dialog";
 import { humanBytes, humanTokens } from "@/lib/format";
 import { basename, dirname, joinPath } from "@/lib/cwd";
 
@@ -113,8 +114,8 @@ function ExportPanel({
   const [lastZipSource, setLastZipSource] = useState<string | null>(null);
 
   const pickDir = async () => {
-    const picked = await openDialog({ directory: true, defaultPath: outDir || undefined });
-    if (typeof picked === "string") {
+    const picked = await pickDirectoryPath({ defaultPath: outDir || undefined });
+    if (picked) {
       setOutDir(picked);
       setLastZipSource(null);
     }
@@ -175,10 +176,10 @@ function ExportPanel({
   };
   const copyId = async (id: string) => {
     try {
-      await navigator.clipboard.writeText(id);
+      await copyText(id);
       toast.success("已复制到剪贴板");
-    } catch {
-      toast.error("复制失败");
+    } catch (e: any) {
+      toast.error("复制失败：" + String(e?.message ?? e));
     }
   };
 
@@ -239,9 +240,10 @@ function ExportPanel({
     if (selectedIds.size === 0 && !lastZipSource) {
       return toast.error("请先勾选要导出的会话，或先完成一次导出");
     }
-    const zipPath = await saveDialog({
+    const zipPath = await saveFilePath({
       defaultPath: joinPath(outDir, `${provider}-bundles-${Date.now()}.zip`),
       filters: [{ name: "Zip", extensions: ["zip"] }],
+      webPrompt: "请输入要写入的 zip 文件路径。该路径必须能被运行 cc-sessions webui 的环境访问。",
     });
     if (!zipPath) return;
     setRunning(true);
@@ -511,17 +513,18 @@ function ImportPanel({
   const [projectTargets, setProjectTargets] = useState<Record<string, string>>({});
 
   const pickDir = async () => {
-    const picked = await openDialog({ directory: true });
-    if (typeof picked === "string") {
+    const picked = await pickDirectoryPath();
+    if (picked) {
       setSrcDir(picked);
     }
   };
 
   const pickZip = async () => {
-    const picked = await openDialog({
+    const picked = await pickFilePath({
       filters: [{ name: "Zip", extensions: ["zip"] }],
+      webPrompt: "请输入要导入的 zip 文件路径。该路径必须能被运行 cc-sessions webui 的环境读取。",
     });
-    if (typeof picked === "string") {
+    if (picked) {
       setRunning(true);
       try {
         const r = await api.unpackZipToTemp(picked);
@@ -577,12 +580,12 @@ function ImportPanel({
   }, [sourceProjects]);
 
   const pickProjectTarget = async (source: string) => {
-    const picked = await openDialog({
-      directory: true,
+    const picked = await pickDirectoryPath({
       defaultPath: projectTargets[source] || undefined,
       title: `选择 ${basename(source)} 的目标项目目录`,
+      webPrompt: `请输入 ${basename(source)} 的目标项目目录。该路径必须能被运行 cc-sessions webui 的环境访问。`,
     });
-    if (typeof picked === "string") {
+    if (picked) {
       setProjectTargets((prev) => ({ ...prev, [source]: picked }));
     }
   };
@@ -845,10 +848,10 @@ function ImportPanel({
                             type="button"
                             onClick={async () => {
                               try {
-                                await navigator.clipboard.writeText(it.manifest.session_id);
+                                await copyText(it.manifest.session_id);
                                 toast.success("已复制到剪贴板");
-                              } catch {
-                                toast.error("复制失败");
+                              } catch (e: any) {
+                                toast.error("复制失败：" + String(e?.message ?? e));
                               }
                             }}
                             className="flex min-w-0 items-center gap-1 truncate text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"

@@ -27,6 +27,13 @@ enum PreviewMode {
     All,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PreviewFormat {
+    Text,
+    Summary,
+    Raw,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionScope {
     Main,
@@ -454,14 +461,21 @@ fn session_action_menu(
 }
 
 fn preview_session(provider: &str, session: &SessionSummary) -> MenuResult<()> {
-    let limit = prompt_usize("预览条数", 40)?;
+    let limit_value = prompt_usize("预览条数，0 表示全部", 40)?;
     let mode = choose_preview_mode()?;
+    let format = choose_preview_format()?;
+    let limit = if limit_value == 0 {
+        None
+    } else {
+        Some(limit_value)
+    };
     let events = collect_preview_events(provider, session, mode, limit)?;
     print_header(
         "会话预览",
         &[
             ("ID", session.id.as_str()),
             ("模式", preview_mode_label(mode)),
+            ("显示", preview_format_label(format)),
         ],
     );
     if events.is_empty() {
@@ -469,15 +483,7 @@ fn preview_session(provider: &str, session: &SessionSummary) -> MenuResult<()> {
         pause()?;
         return Ok(());
     }
-    for event in events {
-        println!(
-            "{:>4}  {:<12} {:<22} {}",
-            event.index,
-            event.role,
-            event.kind,
-            compact(&event.text_summary.replace('\n', " "), 110)
-        );
-    }
+    print_preview_events(&events, format);
     pause()?;
     Ok(())
 }
@@ -494,31 +500,43 @@ fn choose_preview_mode() -> MenuResult<PreviewMode> {
     }
 }
 
+fn choose_preview_format() -> MenuResult<PreviewFormat> {
+    println!("1. 完整正文（默认）");
+    println!("2. 一行摘要");
+    println!("3. 原始 JSONL");
+    match prompt("请选择显示方式 [1]: ")?.as_str() {
+        "" | "1" => Ok(PreviewFormat::Text),
+        "2" => Ok(PreviewFormat::Summary),
+        "3" => Ok(PreviewFormat::Raw),
+        _ => Err("无效显示方式。".to_string()),
+    }
+}
+
 fn collect_preview_events(
     provider: &str,
     session: &SessionSummary,
     mode: PreviewMode,
-    limit: usize,
+    limit: Option<usize>,
 ) -> MenuResult<Vec<PreviewEvent>> {
-    if matches!(mode, PreviewMode::All) {
-        return rollout::preview_session_range(
-            Some(provider.to_string()),
-            session.rollout_path.clone(),
-            0,
-            limit,
-        )
-        .map_err(to_string);
-    }
-
     let mut offset = 0usize;
-    let mut selected = Vec::with_capacity(limit);
+    let mut selected = Vec::new();
     let batch = 100usize;
     loop {
+        let next_limit = match limit {
+            Some(max) => {
+                let remaining = max.saturating_sub(selected.len());
+                if remaining == 0 {
+                    break;
+                }
+                remaining.min(batch)
+            }
+            None => batch,
+        };
         let events = rollout::preview_session_range(
             Some(provider.to_string()),
             session.rollout_path.clone(),
             offset,
-            batch,
+            next_limit,
         )
         .map_err(to_string)?;
         let fetched = events.len();
@@ -526,19 +544,65 @@ fn collect_preview_events(
             break;
         }
         for event in events {
-            if preview_event_visible(&event, mode) {
+            if matches!(mode, PreviewMode::All) || preview_event_visible(&event, mode) {
                 selected.push(event);
-                if selected.len() >= limit {
+                if limit.is_some_and(|max| selected.len() >= max) {
                     return Ok(selected);
                 }
             }
         }
         offset += fetched;
-        if fetched < batch {
+        if fetched < next_limit {
             break;
         }
     }
     Ok(selected)
+}
+
+fn print_preview_events(events: &[PreviewEvent], format: PreviewFormat) {
+    match format {
+        PreviewFormat::Summary => {
+            for event in events {
+                println!(
+                    "{:>4}  {:<12} {:<22} {}",
+                    event.index,
+                    event.role,
+                    event.kind,
+                    compact(&event.text_summary.replace('\n', " "), 110)
+                );
+            }
+        }
+        PreviewFormat::Raw => {
+            for event in events {
+                println!("{}", serde_json::to_string(&event.raw).unwrap_or_default());
+            }
+        }
+        PreviewFormat::Text => {
+            for (pos, event) in events.iter().enumerate() {
+                if pos > 0 {
+                    println!();
+                }
+                let timestamp = if event.timestamp.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" {}", event.timestamp)
+                };
+                println!(
+                    "----- event {} {} / {}{} -----",
+                    event.index, event.role, event.kind, timestamp
+                );
+                let text = rollout::preview_event_text(event);
+                if text.trim().is_empty() {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&event.raw).unwrap_or_default()
+                    );
+                } else {
+                    println!("{text}");
+                }
+            }
+        }
+    }
 }
 
 fn preview_event_visible(event: &PreviewEvent, mode: PreviewMode) -> bool {
@@ -556,6 +620,14 @@ fn preview_mode_label(mode: PreviewMode) -> &'static str {
         PreviewMode::Conversation => "仅对话消息",
         PreviewMode::ConversationAndReasoning => "对话消息 + 推理过程",
         PreviewMode::All => "全部事件",
+    }
+}
+
+fn preview_format_label(format: PreviewFormat) -> &'static str {
+    match format {
+        PreviewFormat::Text => "完整正文",
+        PreviewFormat::Summary => "一行摘要",
+        PreviewFormat::Raw => "原始 JSONL",
     }
 }
 

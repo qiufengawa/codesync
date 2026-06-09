@@ -67,6 +67,7 @@ import {
   type SessionProvider,
   type SwitchStrategy,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 
 export default function RepairRoute({ provider = "codex" }: { provider?: SessionProvider }) {
   return provider === "claude" ? <ClaudeRepairRoute /> : <CodexRepairRoute />;
@@ -1172,10 +1173,10 @@ function DiffRow({
                         className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                         onClick={async () => {
                           try {
-                            await navigator.clipboard.writeText(id);
+                            await copyText(id);
                             toast.success("已复制到剪贴板");
-                          } catch {
-                            toast.error("复制失败");
+                          } catch (e: any) {
+                            toast.error("复制失败：" + String(e?.message ?? e));
                           }
                         }}
                         aria-label="复制会话 ID"

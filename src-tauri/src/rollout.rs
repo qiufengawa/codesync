@@ -181,7 +181,7 @@ fn payload_type(event: &PreviewEvent) -> &str {
         .unwrap_or("")
 }
 
-fn preview_event_text(event: &PreviewEvent) -> String {
+pub fn preview_event_text(event: &PreviewEvent) -> String {
     if let Some(message) = event.raw.get("message") {
         let content = message.get("content");
         let text = flatten_rich_content(content);

@@ -113,6 +113,7 @@ async function createSourcePackage() {
     "src-tauri/capabilities",
     "src-tauri/icons",
     "src-tauri/src",
+    "public",
     "scripts",
   ];
 
@@ -196,11 +197,12 @@ async function createPortablePackage() {
 }
 
 async function createProductPackage() {
+  const bundleDir = path.join(repoRoot, "src-tauri", "target", "release", "bundle");
   if (buildProduct) {
+    await fs.rm(bundleDir, { recursive: true, force: true });
     run("npx", ["tauri", "build", "--ci"]);
   }
 
-  const bundleDir = path.join(repoRoot, "src-tauri", "target", "release", "bundle");
   if (!(await exists(bundleDir))) {
     throw new Error(`Tauri bundle directory was not found: ${bundleDir}. Run with --build-product first.`);
   }
@@ -209,13 +211,24 @@ async function createProductPackage() {
   if (bundleFiles.length === 0) {
     throw new Error(`Tauri bundle directory has no files: ${bundleDir}`);
   }
+  const packageFiles = platform === "windows"
+    ? bundleFiles.filter((filePath) => path.basename(filePath).includes(version))
+    : bundleFiles;
+  if (packageFiles.length === 0) {
+    throw new Error(`Tauri bundle directory has no files for version ${version}: ${bundleDir}`);
+  }
 
   const packageName = `cc-session-manager-product-v${version}-${platform}`;
   const stage = path.join(tempRoot, packageName);
   const archivePath = path.join(outputRoot, `${packageName}.zip`);
 
   await cleanDir(stage);
-  await fs.cp(bundleDir, stage, { recursive: true });
+  for (const filePath of packageFiles) {
+    const relativePath = path.relative(bundleDir, filePath);
+    const destination = path.join(stage, relativePath);
+    await ensureDir(path.dirname(destination));
+    await fs.copyFile(filePath, destination);
+  }
 
   const readme = [
     "CC Sessions",
@@ -237,6 +250,7 @@ async function createProductPackage() {
 
 async function createCliPackage() {
   if (buildProduct) {
+    run("npm", ["run", "build"]);
     const buildArgs = [
       "build",
       "--manifest-path",
@@ -263,6 +277,12 @@ async function createCliPackage() {
 
   await cleanDir(stage);
   await fs.copyFile(exePath, path.join(stage, cliExecutableName()));
+  await fs.writeFile(path.join(stage, "cc-sessions.portable"), "portable\n", "utf8");
+  const distPath = path.join(repoRoot, "dist");
+  if (!(await exists(distPath))) {
+    throw new Error(`Web UI dist directory was not found: ${distPath}. Run npm run build first.`);
+  }
+  await fs.cp(distPath, path.join(stage, "dist"), { recursive: true });
 
   const readme = [
     "CC Sessions CLI",
@@ -275,7 +295,13 @@ async function createCliPackage() {
     "",
     "Examples:",
     "./cc-sessions list --limit 20",
+    "./cc-sessions webui --host 127.0.0.1 --port 17888",
+    "./cc-sessions --provider claude webui --host 127.0.0.1 --port 17888",
     "./cc-sessions repair diagnose --json",
+    "",
+    "This package includes cc-sessions.portable, so Web UI settings are stored beside the executable as cc-sessions-webui-settings.json.",
+    "Installed or custom builds without that marker use the OS user config directory.",
+    "Set CC_SESSIONS_WEBUI_SETTINGS to use an explicit settings file path.",
     "",
   ].join("\n");
   await fs.writeFile(path.join(stage, "README.txt"), readme, "utf8");

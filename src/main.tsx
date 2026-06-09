@@ -11,3 +11,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </BrowserRouter>
   </React.StrictMode>,
 );
+
+window.requestAnimationFrame(() => {
+  const splash = document.getElementById("boot-splash");
+  if (!splash) return;
+  splash.classList.add("boot-splash--leaving");
+  window.setTimeout(() => splash.remove(), 260);
+});

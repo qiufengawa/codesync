@@ -14,6 +14,7 @@ pub mod sessions;
 pub mod settings;
 pub mod state_db;
 pub mod stats;
+pub mod webui;
 
 #[cfg(feature = "desktop")]
 #[cfg(debug_assertions)]

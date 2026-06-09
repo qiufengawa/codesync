@@ -10,7 +10,7 @@ use cc_session_manager_lib::models::{
     SwitchStrategy,
 };
 use cc_session_manager_lib::{
-    backup, bundle, family, fs_ops, paths, repair, rollout, sessions, settings, stats,
+    backup, bundle, family, fs_ops, paths, repair, rollout, sessions, settings, stats, webui,
 };
 use serde::Serialize;
 
@@ -58,7 +58,9 @@ struct CliContext {
     json: bool,
     provider: Option<String>,
     codex_dir: String,
+    codex_dir_explicit: bool,
     claude_dir: String,
+    claude_dir_explicit: bool,
     family_lock: family::FamilyLock,
 }
 
@@ -81,6 +83,13 @@ enum PreviewMode {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewFormat {
+    Text,
+    Summary,
+    Raw,
+}
+
 fn main() {
     if let Err(err) = run_cli() {
         eprintln!("错误: {err}");
@@ -94,9 +103,13 @@ fn run_cli() -> CliResult<()> {
     let help = take_flag(&mut args, "-h") || take_flag(&mut args, "--help");
     let json = take_flag(&mut args, "--json");
     let provider = take_value(&mut args, "--provider")?;
-    let codex_dir = take_value(&mut args, "--codex-dir")?
-        .unwrap_or_else(|| paths::default_codex_dir().to_string_lossy().into_owned());
-    let claude_dir = take_value(&mut args, "--claude-dir")?
+    let codex_dir_arg = take_value(&mut args, "--codex-dir")?;
+    let codex_dir_explicit = codex_dir_arg.is_some();
+    let codex_dir =
+        codex_dir_arg.unwrap_or_else(|| paths::default_codex_dir().to_string_lossy().into_owned());
+    let claude_dir_arg = take_value(&mut args, "--claude-dir")?;
+    let claude_dir_explicit = claude_dir_arg.is_some();
+    let claude_dir = claude_dir_arg
         .unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned());
 
     if help {
@@ -108,7 +121,9 @@ fn run_cli() -> CliResult<()> {
         json,
         provider,
         codex_dir,
+        codex_dir_explicit,
         claude_dir,
+        claude_dir_explicit,
         family_lock: family::FamilyLock::default(),
     };
 
@@ -138,6 +153,7 @@ fn run_cli() -> CliResult<()> {
         "search" => cmd_search(&ctx, args),
         "projects" => cmd_projects(&ctx, args),
         "preview" => cmd_preview(&ctx, args),
+        "webui" => cmd_webui(&ctx, args),
         "meta" => cmd_meta(&ctx, args),
         "resume-command" => cmd_resume_command(&ctx, args),
         "stats" => cmd_stats(&ctx, args),
@@ -170,7 +186,8 @@ fn print_help() {
   list [--archived] [--limit N] [--sort time|size] [--subagent]
   search <关键词> [--sort time|size] [--subagent]
   projects [--archived] [--subagent]
-  preview <rollout路径> [--offset N] [--limit N] [--mode conversation|reasoning|all]
+  preview <rollout路径> [--offset N] [--limit N|0] [--all] [--mode conversation|reasoning|all] [--summary|--raw]
+  webui [--host 127.0.0.1] [--port 17888]
   meta <rollout路径>
   resume-command <session-id>
   stats <kpi|projects|models|timeseries|heatmap>
@@ -190,7 +207,10 @@ fn print_help() {
   cc-sessions --provider claude search "hello"
   cc-sessions --provider claude projects --subagent
   cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
+  cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
   cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
+  cc-sessions webui --host 127.0.0.1 --port 17888
+  cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
   cc-sessions repair diagnose --json
   cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
 "#
@@ -268,69 +288,171 @@ fn cmd_projects(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
 
 fn cmd_preview(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let offset = take_usize(&mut args, "--offset")?.unwrap_or(0);
-    let limit = take_usize(&mut args, "--limit")?.unwrap_or(40);
+    let limit_arg = take_usize(&mut args, "--limit")?;
+    let all = take_flag(&mut args, "--all") || limit_arg == Some(0);
     let mode = parse_preview_mode(take_value(&mut args, "--mode")?)?;
+    let format = parse_preview_format(&mut args)?;
     let path = take_value(&mut args, "--path")?.or_else(|| pop_command(&mut args));
     ensure_no_args(&args)?;
     let path = required(path, "preview 需要 rollout 路径")?;
+    let limit = if all {
+        None
+    } else {
+        Some(limit_arg.unwrap_or(40))
+    };
     let events = collect_preview_events(concrete_provider(ctx)?, path, offset, limit, mode)?;
     output(ctx, &events, |events| {
-        for event in events {
-            println!(
-                "{}\t{}\t{}\t{}",
-                event.index,
-                event.role,
-                event.kind,
-                event.text_summary.replace('\n', " ")
-            );
-        }
+        print_preview_events(events, format);
     })
+}
+
+fn cmd_webui(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
+    let host = take_value(&mut args, "--host")?.unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = take_usize(&mut args, "--port")?.unwrap_or(17888);
+    ensure_no_args(&args)?;
+    if port > u16::MAX as usize {
+        return Err(CliError::message("--port 超出有效端口范围"));
+    }
+    webui::validate_host(&host)?;
+    let default_provider = match ctx.provider.as_deref() {
+        None => None,
+        Some("codex" | "claude") => ctx.provider.clone(),
+        Some("all") => {
+            return Err(CliError::message(
+                "webui 不支持 --provider all；请使用 codex 或 claude",
+            ))
+        }
+        Some(other) => {
+            return Err(CliError::message(format!(
+                "webui 不支持的 provider: {other}；请使用 codex 或 claude"
+            )))
+        }
+    };
+    webui::run(webui::WebuiConfig {
+        host,
+        port: port as u16,
+        default_provider,
+        codex_dir: ctx.codex_dir.clone(),
+        codex_dir_explicit: ctx.codex_dir_explicit,
+        claude_dir: ctx.claude_dir.clone(),
+        claude_dir_explicit: ctx.claude_dir_explicit,
+    })?;
+    Ok(())
 }
 
 fn collect_preview_events(
     provider: String,
     path: String,
     offset: usize,
-    limit: usize,
+    limit: Option<usize>,
     mode: PreviewMode,
 ) -> CliResult<Vec<cc_session_manager_lib::models::PreviewEvent>> {
-    if mode == PreviewMode::All {
-        return Ok(rollout::preview_session_range(
-            Some(provider),
-            path,
-            offset,
-            limit,
-        )?);
-    }
-
     let mut raw_offset = offset;
-    let mut selected = Vec::with_capacity(limit);
+    let mut selected = Vec::new();
     let batch = 100usize;
     loop {
+        let next_limit = match limit {
+            Some(max) => {
+                let remaining = max.saturating_sub(selected.len());
+                if remaining == 0 {
+                    break;
+                }
+                remaining.min(batch)
+            }
+            None => batch,
+        };
         let events = rollout::preview_session_range(
             Some(provider.clone()),
             path.clone(),
             raw_offset,
-            batch,
+            next_limit,
         )?;
         let fetched = events.len();
         if fetched == 0 {
             break;
         }
         for event in events {
-            if preview_event_visible(&event, mode) {
+            if mode == PreviewMode::All || preview_event_visible(&event, mode) {
                 selected.push(event);
-                if selected.len() >= limit {
+                if limit.is_some_and(|max| selected.len() >= max) {
                     return Ok(selected);
                 }
             }
         }
         raw_offset += fetched;
-        if fetched < batch {
+        if fetched < next_limit {
             break;
         }
     }
     Ok(selected)
+}
+
+fn parse_preview_format(args: &mut Vec<String>) -> CliResult<PreviewFormat> {
+    let full = take_flag(args, "--full");
+    let summary = take_flag(args, "--summary");
+    let raw = take_flag(args, "--raw");
+    let selected = [full, summary, raw].into_iter().filter(|v| *v).count();
+    if selected > 1 {
+        return Err(CliError::message(
+            "--full、--summary、--raw 只能选择其中一种",
+        ));
+    }
+    if summary {
+        Ok(PreviewFormat::Summary)
+    } else if raw {
+        Ok(PreviewFormat::Raw)
+    } else {
+        Ok(PreviewFormat::Text)
+    }
+}
+
+fn print_preview_events(
+    events: &[cc_session_manager_lib::models::PreviewEvent],
+    format: PreviewFormat,
+) {
+    match format {
+        PreviewFormat::Summary => {
+            for event in events {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    event.index,
+                    event.role,
+                    event.kind,
+                    event.text_summary.replace('\n', " ")
+                );
+            }
+        }
+        PreviewFormat::Raw => {
+            for event in events {
+                println!("{}", serde_json::to_string(&event.raw).unwrap_or_default());
+            }
+        }
+        PreviewFormat::Text => {
+            for (pos, event) in events.iter().enumerate() {
+                if pos > 0 {
+                    println!();
+                }
+                let timestamp = if event.timestamp.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" {}", event.timestamp)
+                };
+                println!(
+                    "----- event {} {} / {}{} -----",
+                    event.index, event.role, event.kind, timestamp
+                );
+                let text = rollout::preview_event_text(event);
+                if text.trim().is_empty() {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&event.raw).unwrap_or_default()
+                    );
+                } else {
+                    println!("{text}");
+                }
+            }
+        }
+    }
 }
 
 fn preview_event_visible(

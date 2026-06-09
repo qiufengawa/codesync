@@ -36,6 +36,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { api, type PreviewEvent, type SessionSummary } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { formatTimeString, humanTokens } from "@/lib/format";
 import { shouldIgnoreTextEditingHotkey } from "@/lib/keyboard";
 import { parseEmbeddedTranscriptPrompt, type EmbeddedTranscriptPrompt } from "@/lib/sessionText";
@@ -225,7 +226,7 @@ export function PreviewDialog({
   const copySessionId = async () => {
     if (!session) return;
     try {
-      await navigator.clipboard.writeText(session.id);
+      await copyText(session.id);
       toast.success(`已复制会话 ID：${session.id}`);
     } catch (e: any) {
       toast.error("复制会话 ID 失败：" + String(e?.message ?? e));
@@ -241,10 +242,14 @@ export function PreviewDialog({
     }
   };
 
-  const copyPath = () => {
+  const copyPath = async () => {
     if (!rolloutPath) return;
-    navigator.clipboard.writeText(rolloutPath);
-    toast.success("已复制 rollout 路径");
+    try {
+      await copyText(rolloutPath);
+      toast.success("已复制 rollout 路径");
+    } catch (e: any) {
+      toast.error("复制 rollout 路径失败：" + String(e?.message ?? e));
+    }
   };
 
   const requestForkAt = (event: PreviewEvent) => {

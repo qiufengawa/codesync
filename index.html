@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>CC Sessions</title>
     <script>
       (function () {
@@ -22,8 +23,197 @@
         }
       })();
     </script>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #18181b;
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", Arial, sans-serif;
+      }
+
+      html.dark body {
+        background: #0f0f14;
+        color: #f4f4f5;
+      }
+
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #ffffff;
+        color: #18181b;
+        opacity: 1;
+        transition: opacity 220ms ease;
+      }
+
+      html.dark .boot-splash {
+        background: #0f0f14;
+        color: #f4f4f5;
+      }
+
+      .boot-splash--leaving {
+        opacity: 0;
+      }
+
+      .boot-card {
+        width: min(320px, 100%);
+        display: grid;
+        gap: 16px;
+        padding: 18px;
+        border: 1px solid rgba(39, 39, 42, 0.1);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+      }
+
+      html.dark .boot-card {
+        border-color: rgba(244, 244, 245, 0.1);
+        background: rgba(24, 24, 27, 0.9);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+      }
+
+      .boot-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .boot-mark {
+        position: relative;
+        width: 40px;
+        height: 40px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: #18181b;
+        color: #ffffff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      }
+
+      html.dark .boot-mark {
+        background: #f4f4f5;
+        color: #18181b;
+      }
+
+      .boot-mark svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      .boot-mark::after {
+        content: "";
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        width: 10px;
+        height: 3px;
+        border-radius: 999px;
+        background: #22c55e;
+        animation: boot-caret 920ms ease-in-out infinite;
+      }
+
+      .boot-copy {
+        min-width: 0;
+      }
+
+      .boot-title {
+        font-size: 15px;
+        font-weight: 650;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .boot-subtitle {
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #71717a;
+      }
+
+      html.dark .boot-subtitle {
+        color: #a1a1aa;
+      }
+
+      .boot-track {
+        position: relative;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(113, 113, 122, 0.18);
+      }
+
+      .boot-bar {
+        position: absolute;
+        inset-block: 0;
+        left: -38%;
+        width: 38%;
+        border-radius: inherit;
+        background: #22c55e;
+        animation: boot-progress 1180ms cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+
+      @keyframes boot-progress {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(365%);
+        }
+      }
+
+      @keyframes boot-caret {
+        0%,
+        100% {
+          opacity: 0.35;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash {
+          transition: none;
+        }
+
+        .boot-mark::after,
+        .boot-bar {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" class="boot-splash" aria-hidden="true">
+      <div class="boot-card">
+        <div class="boot-brand">
+          <div class="boot-mark">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 7.5 12 12l-5 4.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </div>
+          <div class="boot-copy">
+            <div class="boot-title">CC Sessions</div>
+            <div class="boot-subtitle">正在载入会话工作台</div>
+          </div>
+        </div>
+        <div class="boot-track">
+          <div class="boot-bar"></div>
+        </div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

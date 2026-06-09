@@ -1,4 +1,40 @@
 import { invoke } from "@tauri-apps/api/core";
+import { copyText } from "@/lib/clipboard";
+import { isTauriRuntime, isWebRuntime, webuiApiToken } from "@/lib/runtime";
+
+async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauriRuntime()) {
+    return invoke<T>(command, args);
+  }
+  const apiToken = webuiApiToken();
+  if (!apiToken) {
+    throw new Error("Web UI API token 未初始化，请刷新页面。");
+  }
+
+  const response = await fetch(`/api/invoke/${encodeURIComponent(command)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CC-Sessions-Webui-Token": apiToken,
+    },
+    body: JSON.stringify(args ?? {}),
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(String(data?.error ?? response.statusText));
+  }
+  return data as T;
+}
+
+function resumeCommandText(provider: SessionProvider, sessionId: string) {
+  switch (provider) {
+    case "codex":
+      return `codex resume ${sessionId}`;
+    case "claude":
+      return `claude --resume ${sessionId}`;
+  }
+}
 
 export type SessionProvider = "codex" | "claude";
 export type StatsProvider = "all" | SessionProvider;
@@ -466,42 +502,48 @@ export type FamilyOverlay = {
 export type ZipReport = { path: string; files: number; bytes: number };
 
 export const api = {
-  appVersion: () => invoke<string>("app_version"),
-  getSettings: () => invoke<Settings>("get_settings"),
-  saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
-  openLatestReleasePage: () => invoke<void>("open_latest_release_page"),
-  defaultCodexDir: () => invoke<string>("default_codex_dir"),
-  defaultClaudeDir: () => invoke<string>("default_claude_dir"),
-  validateCodexDir: (path: string) => invoke<DirValidation>("validate_codex_dir", { path }),
-  validateClaudeDir: (path: string) => invoke<DirValidation>("validate_claude_dir", { path }),
+  appVersion: () => invokeCommand<string>("app_version"),
+  getSettings: () => invokeCommand<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invokeCommand<void>("save_settings", { settings }),
+  openLatestReleasePage: async () => {
+    if (isWebRuntime()) {
+      window.open("https://github.com/ccpopy/cc-sessions/releases/latest", "_blank", "noopener,noreferrer");
+      return;
+    }
+    return invokeCommand<void>("open_latest_release_page");
+  },
+  defaultCodexDir: () => invokeCommand<string>("default_codex_dir"),
+  defaultClaudeDir: () => invokeCommand<string>("default_claude_dir"),
+  validateCodexDir: (path: string) => invokeCommand<DirValidation>("validate_codex_dir", { path }),
+  validateClaudeDir: (path: string) => invokeCommand<DirValidation>("validate_claude_dir", { path }),
 
   listSessions: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
-    invoke<SessionSummary[]>("list_sessions", { provider, codexDir, claudeDir }),
+    invokeCommand<SessionSummary[]>("list_sessions", { provider, codexDir, claudeDir }),
   groupByProject: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
-    invoke<ProjectGroup[]>("group_sessions_by_project", { provider, codexDir, claudeDir }),
+    invokeCommand<ProjectGroup[]>("group_sessions_by_project", { provider, codexDir, claudeDir }),
   searchSessions: (provider: SessionProvider, codexDir: string, claudeDir: string | undefined, query: string) =>
-    invoke<SessionSummary[]>("search_sessions", { provider, codexDir, claudeDir, query }),
+    invokeCommand<SessionSummary[]>("search_sessions", { provider, codexDir, claudeDir, query }),
   setArchived: (provider: SessionProvider, codexDir: string, id: string, v: boolean) =>
-    invoke<void>("set_archived", { provider, codexDir, id, v }),
+    invokeCommand<void>("set_archived", { provider, codexDir, id, v }),
   deleteSession: (
     provider: SessionProvider,
     codexDir: string,
     id: string,
     claudeDir?: string,
-  ) => invoke<DeleteResult>("delete_session", { provider, codexDir, claudeDir, id }),
+  ) => invokeCommand<DeleteResult>("delete_session", { provider, codexDir, claudeDir, id }),
   deleteSessions: (
     provider: SessionProvider,
     codexDir: string,
     ids: string[],
     claudeDir?: string,
-  ) => invoke<DeleteResult[]>("delete_sessions", { provider, codexDir, claudeDir, ids }),
+  ) => invokeCommand<DeleteResult[]>("delete_sessions", { provider, codexDir, claudeDir, ids }),
 
   previewHead: (provider: SessionProvider, rolloutPath: string, limit: number) =>
-    invoke<PreviewEvent[]>("preview_session_head", { provider, rolloutPath, limit }),
+    invokeCommand<PreviewEvent[]>("preview_session_head", { provider, rolloutPath, limit }),
   previewRange: (provider: SessionProvider, rolloutPath: string, offset: number, limit: number) =>
-    invoke<PreviewEvent[]>("preview_session_range", { provider, rolloutPath, offset, limit }),
+    invokeCommand<PreviewEvent[]>("preview_session_range", { provider, rolloutPath, offset, limit }),
   previewMeta: (provider: SessionProvider, rolloutPath: string) =>
-    invoke<SessionMetaBrief>("preview_session_meta", { provider, rolloutPath }),
+    invokeCommand<SessionMetaBrief>("preview_session_meta", { provider, rolloutPath }),
 
   createBackup: (p: {
     provider: SessionProvider;
@@ -512,7 +554,7 @@ export const api = {
     name?: string;
     note?: string;
   }) =>
-    invoke<BackupSummary>("create_backup", {
+    invokeCommand<BackupSummary>("create_backup", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -522,8 +564,8 @@ export const api = {
       note: p.note,
     }),
   listBackups: (backupDir: string, provider?: SessionProvider) =>
-    invoke<BackupSummary[]>("list_backups", { backupDir, provider }),
-  openBackup: (backupPath: string) => invoke<BackupDetail>("open_backup", { backupPath }),
+    invokeCommand<BackupSummary[]>("list_backups", { backupDir, provider }),
+  openBackup: (backupPath: string) => invokeCommand<BackupDetail>("open_backup", { backupPath }),
   restoreSession: (p: {
     provider: SessionProvider;
     backup_path: string;
@@ -532,7 +574,7 @@ export const api = {
     id: string;
     overwrite: boolean;
   }) =>
-    invoke<RestoreResult>("restore_session", {
+    invokeCommand<RestoreResult>("restore_session", {
       provider: p.provider,
       backupPath: p.backup_path,
       codexDir: p.codex_dir,
@@ -547,15 +589,15 @@ export const api = {
     claude_dir?: string;
     overwrite: boolean;
   }) =>
-    invoke<RestoreResult[]>("restore_all", {
+    invokeCommand<RestoreResult[]>("restore_all", {
       provider: p.provider,
       backupPath: p.backup_path,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
       overwrite: p.overwrite,
     }),
-  deleteBackup: (backupPath: string) => invoke<void>("delete_backup", { backupPath }),
-  verifyBackup: (backupPath: string) => invoke<VerifyReport>("verify_backup", { backupPath }),
+  deleteBackup: (backupPath: string) => invokeCommand<void>("delete_backup", { backupPath }),
+  verifyBackup: (backupPath: string) => invokeCommand<VerifyReport>("verify_backup", { backupPath }),
 
   statsKpi: (p: {
     provider: StatsProvider;
@@ -566,7 +608,7 @@ export const api = {
     cwd_filter: string[];
     include_archived: boolean;
   }) =>
-    invoke<Kpi>("stats_kpi", {
+    invokeCommand<Kpi>("stats_kpi", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -585,7 +627,7 @@ export const api = {
     cwd_filter: string[];
     include_archived: boolean;
   }) =>
-    invoke<TimeseriesPoint[]>("stats_timeseries", {
+    invokeCommand<TimeseriesPoint[]>("stats_timeseries", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -605,7 +647,7 @@ export const api = {
     cwd_filter: string[];
     include_archived: boolean;
   }) =>
-    invoke<ProjectStat[]>("stats_by_project", {
+    invokeCommand<ProjectStat[]>("stats_by_project", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -624,7 +666,7 @@ export const api = {
     cwd_filter: string[];
     include_archived: boolean;
   }) =>
-    invoke<ModelStat[]>("stats_by_model", {
+    invokeCommand<ModelStat[]>("stats_by_model", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -642,7 +684,7 @@ export const api = {
     cwd_filter: string[];
     include_archived: boolean;
   }) =>
-    invoke<number[][]>("stats_heatmap", {
+    invokeCommand<number[][]>("stats_heatmap", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -652,38 +694,44 @@ export const api = {
       includeArchived: p.include_archived,
     }),
 
-  revealCwd: (cwd: string) => invoke<void>("reveal_cwd", { cwd }),
-  copyResumeCommand: (provider: SessionProvider, sessionId: string) =>
-    invoke<string>("copy_resume_command", { provider, sessionId }),
+  revealCwd: (cwd: string) => invokeCommand<void>("reveal_cwd", { cwd }),
+  copyResumeCommand: async (provider: SessionProvider, sessionId: string) => {
+    if (isWebRuntime()) {
+      const text = resumeCommandText(provider, sessionId);
+      await copyText(text);
+      return text;
+    }
+    return invokeCommand<string>("copy_resume_command", { provider, sessionId });
+  },
 
   // ========================= 修复 =========================
-  getProviderInfo: (codexDir: string) => invoke<ProviderInfo>("get_provider_info", { codexDir }),
+  getProviderInfo: (codexDir: string) => invokeCommand<ProviderInfo>("get_provider_info", { codexDir }),
   diagnoseProjectConfigs: (codexDir: string) =>
-    invoke<ProjectConfigReport>("diagnose_project_configs", { codexDir }),
+    invokeCommand<ProjectConfigReport>("diagnose_project_configs", { codexDir }),
   repairProjectConfigs: (codexDir: string, dryRun: boolean) =>
-    invoke<ProjectConfigRepairReport>("repair_project_configs", { codexDir, dryRun }),
+    invokeCommand<ProjectConfigRepairReport>("repair_project_configs", { codexDir, dryRun }),
   diagnoseCodexState: (codexDir: string) =>
-    invoke<DiagnosticReport>("diagnose_codex_state", { codexDir }),
+    invokeCommand<DiagnosticReport>("diagnose_codex_state", { codexDir }),
   repairSessionIndex: (codexDir: string, dryRun: boolean) =>
-    invoke<IndexRepairReport>("repair_session_index", { codexDir, dryRun }),
+    invokeCommand<IndexRepairReport>("repair_session_index", { codexDir, dryRun }),
   rebuildThreadsTable: (codexDir: string, dryRun: boolean) =>
-    invoke<ThreadsRebuildReport>("rebuild_threads_table", { codexDir, dryRun }),
+    invokeCommand<ThreadsRebuildReport>("rebuild_threads_table", { codexDir, dryRun }),
   pruneOrphanEntries: (p: {
     codex_dir: string;
     prune_index: boolean;
     prune_threads: boolean;
     dry_run: boolean;
   }) =>
-    invoke<OrphanPruneReport>("prune_orphan_entries", {
+    invokeCommand<OrphanPruneReport>("prune_orphan_entries", {
       codexDir: p.codex_dir,
       pruneIndex: p.prune_index,
       pruneThreads: p.prune_threads,
       dryRun: p.dry_run,
     }),
   diagnoseClaudeHistoryOrphans: (claudeDir: string) =>
-    invoke<HistoryOrphanReport>("diagnose_claude_history_orphans", { claudeDir }),
+    invokeCommand<HistoryOrphanReport>("diagnose_claude_history_orphans", { claudeDir }),
   pruneClaudeHistoryOrphans: (claudeDir: string, dryRun: boolean) =>
-    invoke<HistoryPruneReport>("prune_claude_history_orphans", { claudeDir, dryRun }),
+    invokeCommand<HistoryPruneReport>("prune_claude_history_orphans", { claudeDir, dryRun }),
   cloneSessionForProvider: (p: {
     codex_dir: string;
     session_id: string;
@@ -691,7 +739,7 @@ export const api = {
     strategy: SwitchStrategy;
     dry_run: boolean;
   }) =>
-    invoke<CloneReport>("clone_session_for_provider", {
+    invokeCommand<CloneReport>("clone_session_for_provider", {
       codexDir: p.codex_dir,
       sessionId: p.session_id,
       targetProvider: p.target_provider,
@@ -704,7 +752,7 @@ export const api = {
     rollout_path: string;
     event_index: number;
   }) =>
-    invoke<ForkSessionReport>("fork_session_at_event", {
+    invokeCommand<ForkSessionReport>("fork_session_at_event", {
       codexDir: p.codex_dir,
       sessionId: p.session_id,
       rolloutPath: p.rollout_path,
@@ -715,36 +763,36 @@ export const api = {
     strategy: SwitchStrategy;
     dry_run: boolean;
   }) =>
-    invoke<CloneReport[]>("batch_clone_for_current_provider", {
+    invokeCommand<CloneReport[]>("batch_clone_for_current_provider", {
       codexDir: p.codex_dir,
       strategy: p.strategy,
       dryRun: p.dry_run,
     }),
   rollbackFamilyActive: (codexDir: string, familyId: string, targetBranchId: string) =>
-    invoke<void>("rollback_family_active", { codexDir, familyId, targetBranchId }),
+    invokeCommand<void>("rollback_family_active", { codexDir, familyId, targetBranchId }),
   deleteFamilyBranch: (codexDir: string, familyId: string, branchId: string) =>
-    invoke<DeleteResult>("delete_family_branch", { codexDir, familyId, branchId }),
+    invokeCommand<DeleteResult>("delete_family_branch", { codexDir, familyId, branchId }),
   getFamilyBranchSyncStates: (codexDir: string, familyId: string) =>
-    invoke<BranchSyncState[]>("get_family_branch_sync_states", { codexDir, familyId }),
+    invokeCommand<BranchSyncState[]>("get_family_branch_sync_states", { codexDir, familyId }),
   syncBranchIntoActive: (codexDir: string, familyId: string, sourceBranchId: string) =>
-    invoke<SyncBranchReport>("sync_branch_into_active", {
+    invokeCommand<SyncBranchReport>("sync_branch_into_active", {
       codexDir,
       familyId,
       sourceBranchId,
     }),
   syncActiveIntoBranch: (codexDir: string, familyId: string, targetBranchId: string) =>
-    invoke<BranchSyncReport>("sync_active_into_branch", {
+    invokeCommand<BranchSyncReport>("sync_active_into_branch", {
       codexDir,
       familyId,
       targetBranchId,
     }),
 
   // ========================= 家族 =========================
-  getFamilyStore: (codexDir: string) => invoke<FamilyStore>("get_family_store", { codexDir }),
+  getFamilyStore: (codexDir: string) => invokeCommand<FamilyStore>("get_family_store", { codexDir }),
   verifyFamilyIntegrity: (codexDir: string) =>
-    invoke<FamilyIntegrityReport>("verify_family_integrity", { codexDir }),
+    invokeCommand<FamilyIntegrityReport>("verify_family_integrity", { codexDir }),
   getSessionFamilyOverlay: (codexDir: string) =>
-    invoke<FamilyOverlay[]>("get_session_family_overlay", { codexDir }),
+    invokeCommand<FamilyOverlay[]>("get_session_family_overlay", { codexDir }),
 
   // ========================= Bundle 导出 / 导入 =========================
   exportSessionBundles: (p: {
@@ -756,7 +804,7 @@ export const api = {
     machine_label?: string;
     export_group?: string;
   }) =>
-    invoke<ExportReport[]>("export_session_bundles", {
+    invokeCommand<ExportReport[]>("export_session_bundles", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -774,7 +822,7 @@ export const api = {
     export_group?: string;
     active_only: boolean;
   }) =>
-    invoke<ExportReport[]>("export_all_bundles", {
+    invokeCommand<ExportReport[]>("export_all_bundles", {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
@@ -784,9 +832,9 @@ export const api = {
       activeOnly: p.active_only,
     }),
   listBundles: (srcDir: string, provider?: SessionProvider) =>
-    invoke<BundleListItem[]>("list_bundles", { srcDir, provider }),
+    invokeCommand<BundleListItem[]>("list_bundles", { srcDir, provider }),
   verifyBundlesCmd: (srcDir: string, provider?: SessionProvider) =>
-    invoke<BundleListItem[]>("verify_bundles", { srcDir, provider }),
+    invokeCommand<BundleListItem[]>("verify_bundles", { srcDir, provider }),
   importSessionBundles: (p: {
     provider: SessionProvider;
     src_dir: string;
@@ -797,7 +845,7 @@ export const api = {
     strict: boolean;
     project_mappings: ProjectPathMapping[];
   }) =>
-    invoke<ImportReport[]>("import_session_bundles", {
+    invokeCommand<ImportReport[]>("import_session_bundles", {
       provider: p.provider,
       srcDir: p.src_dir,
       codexDir: p.codex_dir,
@@ -808,9 +856,9 @@ export const api = {
       projectMappings: p.project_mappings,
     }),
   packBundlesZip: (srcDir: string, zipPath: string) =>
-    invoke<ZipReport>("pack_bundles_zip", { srcDir, zipPath }),
+    invokeCommand<ZipReport>("pack_bundles_zip", { srcDir, zipPath }),
   unpackZip: (zipPath: string, dstDir: string) =>
-    invoke<ZipReport>("unpack_zip", { zipPath, dstDir }),
+    invokeCommand<ZipReport>("unpack_zip", { zipPath, dstDir }),
   unpackZipToTemp: (zipPath: string) =>
-    invoke<ZipReport>("unpack_zip_to_temp", { zipPath }),
+    invokeCommand<ZipReport>("unpack_zip_to_temp", { zipPath }),
 };

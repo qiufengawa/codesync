@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -25,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, type DirValidation, type UpdateCheckResult } from "@/lib/api";
+import { pickDirectoryPath } from "@/lib/dialog";
 import { useSettings } from "@/stores/settings";
 import { toast } from "sonner";
 
@@ -91,8 +91,8 @@ export function SettingsSheet({ trigger }: Props) {
   }, [claude]);
 
   const pick = async (setter: (s: string) => void, cur: string) => {
-    const picked = await openDialog({ directory: true, defaultPath: cur });
-    if (typeof picked === "string") setter(picked);
+    const picked = await pickDirectoryPath({ defaultPath: cur });
+    if (picked) setter(picked);
   };
 
   const useDefault = async () => {
@@ -181,7 +181,7 @@ export function SettingsSheet({ trigger }: Props) {
         <SheetHeader className="space-y-1">
           <SheetTitle>设置</SheetTitle>
           <SheetDescription>
-            本地运行，只有手动检查更新时会请求 GitHub；配置写入本机 config 目录。
+            本地运行，只有手动检查更新时会请求 GitHub；路径配置以当前运行环境为准。
           </SheetDescription>
         </SheetHeader>
 
