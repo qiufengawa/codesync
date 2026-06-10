@@ -96,26 +96,17 @@ jobs:
             ## Changes
 
             ### 新增
-            - 新增 CLI Web UI：可通过 `cc-sessions webui --host 127.0.0.1 --port 17888` 在无桌面环境、WSL、服务器或 SSH 场景中使用浏览器管理会话。
-            - CLI 发布包内置 Web UI 前端资源，并包含 `cc-sessions.portable` 标记文件，便携包可直接在可执行文件旁持久化 Web UI 设置。
-            - CLI 会话预览支持完整正文输出、`--summary` 一行摘要、`--raw` 原始 JSONL，以及 `--all` / `--limit 0` 读取完整文件。
-            - 交互式 CLI 菜单支持选择完整正文、一行摘要或原始 JSONL 预览会话。
-            - 新增启动加载页和 favicon，降低桌面端与浏览器 Web UI 初始化时的白屏感。
+            - 新增 Claude GUI 会话列表可见性诊断与修复能力，可检测因标题推导失败而从 VS Code 等 GUI 历史列表中消失的 Claude Code 会话。
+            - 新增 `cc-sessions repair claude-gui [--fix] [--dry-run]`，支持在 CLI 中预览或补写 `custom-title` 记录来恢复 GUI 显示。
+            - 桌面端和浏览器 Web UI 的 Claude 修复页新增 GUI 会话列表修复入口，包含扫描统计、可修复会话列表、效果预览和确认修复流程。
 
             ### 改进
-            - Web UI 设置持久化策略更明确：便携包写入可执行文件同目录；安装版或自定义构建写入系统用户配置目录；也可通过 `CC_SESSIONS_WEBUI_SETTINGS` 显式指定配置文件。
-            - `cc-sessions --provider claude webui` 会默认进入 Claude 页面，`--provider codex` 会默认进入 Codex 页面。
-            - 浏览器 Web UI 中的目录、文件和 zip 保存入口改为手动输入运行 Web UI 环境可访问的路径，桌面端仍使用系统对话框。
-            - 发布打包流程会清理旧 Tauri bundle，并只打包当前版本产物，减少旧版本安装包混入 release 的风险。
-
-            ### 安全
-            - Web UI 启动时生成一次性 API token，并要求浏览器请求携带该 token，避免其他网页直接调用本机 Web UI API。
+            - 交互式 CLI 的修复菜单补充 Claude GUI 会话列表修复和 Claude history 残留清理入口，减少需要记忆子命令的场景。
+            - Claude GUI 会话列表修复会复刻官方 GUI 的标题推导规则，只对可确认不可见且能从会话内容推导标题的会话进行处理。
 
             ### 修复
-            - 修复浏览器 Web UI 中复制 resume 命令可能提示成功但实际未写入剪贴板的问题；复制失败时会明确提示。
-            - 修复 Web UI 设置此前仅保存在内存中，服务重启后丢失的问题。
-            - 修复 Web UI 响应序列化失败时可能返回 200 错误体的问题，改为明确返回 500。
-            - 修复 Web UI 前端运行时配置注入对损坏 `index.html` 过度宽容的问题，缺少 `</head>` 时会直接暴露错误。
+            - 修复通知弹窗样式未加载导致 toast 撑开页面布局的问题。
+            - 修复 Claude Code 在中转 provider、长会话 compact 后续聊等场景下，GUI 因无法从会话文件头尾窗口推导标题而不显示历史会话的问题；修复时会在 jsonl 末尾追加与官方重命名一致的 `custom-title` 记录，不改动既有会话内容。
           releaseDraft: false
           prerelease: false
 
