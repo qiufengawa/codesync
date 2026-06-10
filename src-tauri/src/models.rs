@@ -574,6 +574,44 @@ pub struct HistoryPruneReport {
     pub orphan_session_ids: Vec<String>,
 }
 
+/// 在 Claude Code GUI（VS Code 插件）会话列表中不可见、但可通过补写标题修复的会话。
+#[derive(Debug, Clone, Serialize)]
+pub struct GuiVisibilityIssue {
+    pub session_id: String,
+    pub path: String,
+    /// projects/ 下所属项目目录名
+    pub project_dir: String,
+    pub cwd: String,
+    /// 将以 custom-title 记录补写的标题（来自全量解析的会话内容）
+    pub proposed_title: String,
+    pub updated_at: i64,
+    pub file_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GuiVisibilityReport {
+    pub provider: String,
+    pub projects_root: String,
+    pub scanned_sessions: u32,
+    pub visible_sessions: u32,
+    /// 首行标记 isSidechain 的子代理会话（GUI 本就不展示，无需修复）
+    pub sidechain_sessions: u32,
+    pub empty_sessions: u32,
+    /// 不可见且无法从内容推导标题的会话（通常没有任何用户消息）
+    pub unfixable_sessions: u32,
+    pub issues: Vec<GuiVisibilityIssue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GuiVisibilityFixReport {
+    pub provider: String,
+    pub fixed: u32,
+    pub skipped: u32,
+    pub dry_run: bool,
+    pub fixed_session_ids: Vec<String>,
+    pub errors: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FamilyOverlay {
     pub session_id: String,

@@ -188,6 +188,7 @@ CLI 和桌面端的修复功能只处理 Codex 本地索引和可见性问题，
 - `清理 orphan 记录`：删除 `session_index.jsonl` 或 `threads` 表里指向已不存在 rollout 文件的残留记录。它不会删除仍存在的有效会话文件。
 - `克隆会话到 provider` / `批量克隆到当前 provider`：用于处理 Codex `model_provider` 切换后，历史会话 provider 与当前配置不一致导致的可见性或续聊问题。
 - `从事件创建回溯分支`：从某个稳定事件位置复制出新分支，并归档原 active 分支。该操作会写入本地 Codex 会话文件和索引，执行前会要求确认。
+- `Claude GUI 会话列表修复`（`repair claude-gui [--fix] [--dry-run]`）：Claude Code 的 GUI（如 VS Code 插件）只读取会话文件头尾各 64KB 推导标题，推导失败的会话会从历史列表中消失（CLI `claude --resume` 不受影响，常见于走中转 provider 时 AI 标题生成失败、长会话 compact 后续聊等场景）。修复方式与官方"重命名会话"一致：在 jsonl 末尾补写一条 `custom-title` 记录，不改动既有内容。
 
 ## 发布
 

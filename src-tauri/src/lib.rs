@@ -78,6 +78,8 @@ pub fn run() {
             repair::prune_orphan_entries,
             repair::diagnose_claude_history_orphans,
             repair::prune_claude_history_orphans,
+            repair::diagnose_claude_gui_visibility,
+            repair::repair_claude_gui_visibility,
             repair::clone_session_for_provider,
             repair::fork_session_at_event,
             repair::batch_clone_for_current_provider,

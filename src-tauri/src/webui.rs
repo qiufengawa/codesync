@@ -328,6 +328,14 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             string_arg(&args, "claudeDir")?,
             bool_arg(&args, "dryRun")?,
         )),
+        "diagnose_claude_gui_visibility" => to_result_value(
+            repair::diagnose_claude_gui_visibility(string_arg(&args, "claudeDir")?),
+        ),
+        "repair_claude_gui_visibility" => to_result_value(repair::repair_claude_gui_visibility(
+            string_arg(&args, "claudeDir")?,
+            bool_arg(&args, "dryRun")?,
+            opt_string_vec_arg(&args, "sessionIds")?,
+        )),
         "clone_session_for_provider" => {
             to_result_value(repair::clone_session_for_provider_with_lock(
                 string_arg(&args, "codexDir")?,
@@ -685,6 +693,13 @@ fn string_arg(args: &Value, name: &str) -> AppResult<String> {
 }
 
 fn opt_string_arg(args: &Value, name: &str) -> AppResult<Option<String>> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone()).map_err(AppError::Serde),
+    }
+}
+
+fn opt_string_vec_arg(args: &Value, name: &str) -> AppResult<Option<Vec<String>>> {
     match args.get(name) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => serde_json::from_value(value.clone()).map_err(AppError::Serde),

@@ -193,7 +193,7 @@ fn print_help() {
   stats <kpi|projects|models|timeseries|heatmap>
   backup <create|list|open|verify|delete|restore|restore-all>
   bundle <export|export-all|list|verify|import|pack|unpack>
-  repair <provider-info|project-configs|diagnose|index|threads|prune|claude-history|clone|batch-clone|fork>
+  repair <provider-info|project-configs|diagnose|index|threads|prune|claude-history|claude-gui|clone|batch-clone|fork>
   family <store|verify|overlay|rollback|delete-branch|sync-states|sync-into-active|sync-active-into>
   settings <defaults|read|validate>
   menu
@@ -1014,6 +1014,44 @@ fn cmd_repair(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                     println!("untracked_rows\t{}", report.untracked_rows);
                     for id in &report.orphan_session_ids {
                         println!("orphan_session_id\t{id}");
+                    }
+                })
+            }
+        }
+        "claude-gui" => {
+            let fix = take_flag(&mut args, "--fix");
+            let dry_run = take_flag(&mut args, "--dry-run");
+            ensure_no_args(&args)?;
+            if fix {
+                let report =
+                    repair::repair_claude_gui_visibility(ctx.claude_dir.clone(), dry_run, None)?;
+                output(ctx, &report, |report| {
+                    println!(
+                        "fixed={}\tskipped={}\tdry_run={}",
+                        report.fixed, report.skipped, report.dry_run
+                    );
+                    for id in &report.fixed_session_ids {
+                        println!("fixed_session_id\t{id}");
+                    }
+                    for error in &report.errors {
+                        println!("error\t{error}");
+                    }
+                })
+            } else {
+                let report = repair::diagnose_claude_gui_visibility(ctx.claude_dir.clone())?;
+                output(ctx, &report, |report| {
+                    println!("projects_root\t{}", report.projects_root);
+                    println!("scanned_sessions\t{}", report.scanned_sessions);
+                    println!("visible_sessions\t{}", report.visible_sessions);
+                    println!("sidechain_sessions\t{}", report.sidechain_sessions);
+                    println!("empty_sessions\t{}", report.empty_sessions);
+                    println!("unfixable_sessions\t{}", report.unfixable_sessions);
+                    println!("invisible_fixable\t{}", report.issues.len());
+                    for issue in &report.issues {
+                        println!(
+                            "issue\t{}\t{}\t{}",
+                            issue.session_id, issue.project_dir, issue.proposed_title
+                        );
                     }
                 })
             }

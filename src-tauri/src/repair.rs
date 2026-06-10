@@ -17,7 +17,8 @@ use crate::error::{AppError, AppResult};
 use crate::family;
 use crate::models::{
     BranchStatus, BranchSyncReport, BranchSyncState, CloneReport, DiagnosticReport, Family,
-    FamilyBranch, ForkSessionReport, HistoryOrphanReport, HistoryPruneReport, IndexRepairReport,
+    FamilyBranch, ForkSessionReport, GuiVisibilityFixReport, GuiVisibilityIssue,
+    GuiVisibilityReport, HistoryOrphanReport, HistoryPruneReport, IndexRepairReport,
     OrphanPruneReport, ProjectConfigIssue, ProjectConfigRepairItem, ProjectConfigRepairReport,
     ProjectConfigReport, ProviderInfo, SwitchStrategy, SyncBranchReport, ThreadsRebuildReport,
 };
@@ -1140,6 +1141,446 @@ fn claude_history_context(claude_dir: String) -> AppResult<(PathBuf, BTreeSet<St
         .map(|session| session.id)
         .collect::<BTreeSet<_>>();
     Ok((paths::history_path(&claude), session_ids))
+}
+
+// ========================= Claude GUI 会话列表可见性 =========================
+//
+// Claude Code 的 VS Code 插件（GUI）构建"历史会话"列表时，只读取每个
+// projects/<项目>/<uuid>.jsonl 的头部与尾部各 64KB 窗口，并按
+// customTitle → aiTitle → lastPrompt → summary → 头部窗口内首条用户消息
+// 的顺序推导标题；推导不出标题的会话会被直接从列表里丢弃（CLI 的
+// `claude --resume <id>` 不受影响，因为它按 id 读取完整文件）。
+//
+// 走中转 provider 时 AI 标题/summary 生成经常失败，而长会话 compact 后
+// resume 的文件头部往往被 compact summary（isCompactSummary，被跳过）和
+// 工具输出占满，导致标题链全部落空 →"CLI 里有完整对话，GUI 不显示"。
+//
+// 修复方式与插件自身的"重命名"完全一致：在 jsonl 末尾追加一条
+// `{"type":"custom-title","sessionId":...,"customTitle":...}` 记录。
+
+const GUI_WINDOW_BYTES: u64 = 65536;
+
+/// 读取文件头部/尾部各 64KB 窗口（与 VS Code 插件的读取方式一致）。
+fn gui_read_windows(path: &Path) -> AppResult<Option<(String, String, u64)>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size == 0 {
+        return Ok(None);
+    }
+    let head_len = size.min(GUI_WINDOW_BYTES) as usize;
+    let mut head_buf = vec![0u8; head_len];
+    file.read_exact(&mut head_buf)?;
+    let head = String::from_utf8_lossy(&head_buf).into_owned();
+    let tail = if size > GUI_WINDOW_BYTES {
+        let mut tail_buf = vec![0u8; GUI_WINDOW_BYTES as usize];
+        file.seek(SeekFrom::Start(size - GUI_WINDOW_BYTES))?;
+        file.read_exact(&mut tail_buf)?;
+        String::from_utf8_lossy(&tail_buf).into_owned()
+    } else {
+        head.clone()
+    };
+    Ok(Some((head, tail, size)))
+}
+
+/// 插件的字符串字段提取：取文本中最后一次出现的 `"key":"value"`（含转义处理）。
+fn gui_last_string_field(text: &str, key: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut best: Option<String> = None;
+    let mut best_idx: isize = -1;
+    for pat in [format!("\"{key}\":\""), format!("\"{key}\": \"")] {
+        let pat_bytes = pat.as_bytes();
+        let mut from = 0usize;
+        while let Some(rel) = find_subslice(&bytes[from..], pat_bytes) {
+            let at = from + rel;
+            let start = at + pat_bytes.len();
+            let mut i = start;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    if at as isize > best_idx {
+                        let raw = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                        best = Some(gui_unescape(&raw));
+                        best_idx = at as isize;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            from = i + 1;
+            if from >= bytes.len() {
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn gui_unescape(raw: &str) -> String {
+    if !raw.contains('\\') {
+        return raw.to_string();
+    }
+    serde_json::from_str::<String>(&format!("\"{raw}\"")).unwrap_or_else(|_| raw.to_string())
+}
+
+/// 插件 `a6e`：以类 XML 标签或 "[Request interrupted by user...]" 开头的文本不作为标题。
+fn gui_title_skipped(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('<') {
+        let mut chars = rest.chars();
+        if let Some(first) = chars.next() {
+            if first.is_ascii_lowercase() {
+                let after = &rest[1..];
+                let name_len = after
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+                    .unwrap_or(after.len());
+                if let Some(next) = after[name_len..].chars().next() {
+                    if next.is_whitespace() || next == '>' {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(rest) = text.strip_prefix("[Request interrupted by user") {
+        if rest.contains(']') {
+            return true;
+        }
+    }
+    false
+}
+
+fn gui_tag_capture<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let end = text[start..].find(close)? + start;
+    Some(&text[start..end])
+}
+
+/// 插件 `Aie`：从一条 user 记录提取标题候选。
+fn gui_user_record_title(value: &Value, command_fallback: &mut String) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    if value.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || value.get("isCompactSummary").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let message = value.get("message")?;
+    if message.is_null() {
+        return None;
+    }
+    let mut texts: Vec<String> = Vec::new();
+    match message.get("content") {
+        Some(Value::String(s)) => texts.push(s.clone()),
+        Some(Value::Array(items)) => {
+            for item in items {
+                let Some(obj) = item.as_object() else {
+                    continue;
+                };
+                match obj.get("type").and_then(Value::as_str) {
+                    Some("tool_result") => return None,
+                    Some("text") => {
+                        if let Some(text) = obj.get("text").and_then(Value::as_str) {
+                            texts.push(text.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    for text in texts {
+        let line = text.replace('\n', " ").trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(cmd) = gui_tag_capture(&line, "<command-name>", "</command-name>") {
+            if command_fallback.is_empty() {
+                *command_fallback = cmd.to_string();
+            }
+            continue;
+        }
+        if let Some(bash) = gui_tag_capture(&line, "<bash-input>", "</bash-input>") {
+            return Some(format!("! {}", bash.trim()));
+        }
+        if gui_title_skipped(&line) {
+            continue;
+        }
+        let truncated: String = if line.chars().count() > 200 {
+            format!("{}…", line.chars().take(200).collect::<String>().trim_end())
+        } else {
+            line
+        };
+        return Some(truncated);
+    }
+    None
+}
+
+/// 插件 `jie`：在头部窗口内逐行寻找首条可作标题的用户消息。
+fn gui_head_title(head: &str) -> Option<String> {
+    let mut command_fallback = String::new();
+    for line in head.split('\n') {
+        if !line.contains("\"type\":\"user\"") && !line.contains("\"type\": \"user\"") {
+            continue;
+        }
+        if line.contains("\"tool_result\"") {
+            continue;
+        }
+        if line.contains("\"isMeta\":true") || line.contains("\"isMeta\": true") {
+            continue;
+        }
+        if line.contains("\"isCompactSummary\":true") || line.contains("\"isCompactSummary\": true")
+        {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(title) = gui_user_record_title(&value, &mut command_fallback) {
+            return Some(title);
+        }
+    }
+    if command_fallback.is_empty() {
+        None
+    } else {
+        Some(command_fallback)
+    }
+}
+
+/// 复刻插件 fetchSessions 的标题推导链；返回 None 即该会话在 GUI 列表中不可见。
+fn gui_visible_title(head: &str, tail: &str) -> Option<String> {
+    let named = gui_last_string_field(tail, "customTitle")
+        .or_else(|| gui_last_string_field(head, "customTitle"))
+        .or_else(|| gui_last_string_field(tail, "aiTitle"))
+        .or_else(|| gui_last_string_field(head, "aiTitle"));
+    if let Some(title) = named.filter(|t| !t.is_empty()) {
+        return Some(title);
+    }
+    if let Some(title) = gui_last_string_field(tail, "lastPrompt").filter(|t| !t.is_empty()) {
+        return Some(title);
+    }
+    if let Some(title) = gui_last_string_field(tail, "summary").filter(|t| !t.is_empty()) {
+        return Some(title);
+    }
+    gui_head_title(head).filter(|t| !t.is_empty())
+}
+
+fn is_session_uuid(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        match i {
+            8 | 13 | 18 | 23 => {
+                if *b != b'-' {
+                    return false;
+                }
+            }
+            _ => {
+                if !b.is_ascii_hexdigit() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn first_line_is_sidechain(head: &str) -> bool {
+    let first = head.split('\n').next().unwrap_or(head);
+    first.contains("\"isSidechain\":true") || first.contains("\"isSidechain\": true")
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn diagnose_claude_gui_visibility(claude_dir: String) -> AppResult<GuiVisibilityReport> {
+    let claude = PathBuf::from(&claude_dir);
+    let projects_root = paths::claude_projects_dir(&claude);
+
+    let mut scanned = 0u32;
+    let mut visible = 0u32;
+    let mut sidechain = 0u32;
+    let mut empty = 0u32;
+    let mut unfixable = 0u32;
+    let mut invisible_paths: Vec<(PathBuf, String, String)> = Vec::new();
+
+    if projects_root.is_dir() {
+        for project in fs::read_dir(&projects_root)? {
+            let project = project?;
+            let project_path = project.path();
+            if !project_path.is_dir() {
+                continue;
+            }
+            let project_dir = project.file_name().to_string_lossy().into_owned();
+            for entry in fs::read_dir(&project_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(stem) = name.strip_suffix(".jsonl") else {
+                    continue;
+                };
+                if !is_session_uuid(stem) {
+                    continue;
+                }
+                scanned += 1;
+                let Some((head, tail, _size)) = gui_read_windows(&path)? else {
+                    empty += 1;
+                    continue;
+                };
+                if first_line_is_sidechain(&head) {
+                    sidechain += 1;
+                    continue;
+                }
+                if gui_visible_title(&head, &tail).is_some() {
+                    visible += 1;
+                    continue;
+                }
+                invisible_paths.push((path, project_dir.clone(), stem.to_string()));
+            }
+        }
+    }
+
+    let mut issues = Vec::new();
+    if !invisible_paths.is_empty() {
+        let summaries: HashMap<String, crate::models::SessionSummary> =
+            crate::claude_sessions::scan_sessions(&claude)?
+                .into_iter()
+                .map(|s| (s.rollout_path.clone(), s))
+                .collect();
+        for (path, project_dir, stem) in invisible_paths {
+            let key = path.to_string_lossy().into_owned();
+            let Some(summary) = summaries.get(&key) else {
+                unfixable += 1;
+                continue;
+            };
+            // 标题必须来自会话内容（用户消息 / 标题记录），而不是 id 或目录名兜底，
+            // 否则补写出来的是没有意义的占位标题。
+            let content_derived = !summary.first_user_message.is_empty()
+                || (summary.title != summary.id && summary.title != summary.cwd_display);
+            if !content_derived || summary.title.is_empty() {
+                unfixable += 1;
+                continue;
+            }
+            issues.push(GuiVisibilityIssue {
+                session_id: if summary.id.is_empty() {
+                    stem
+                } else {
+                    summary.id.clone()
+                },
+                path: key,
+                project_dir,
+                cwd: summary.cwd.clone(),
+                proposed_title: summary.title.clone(),
+                updated_at: summary.updated_at,
+                file_size: summary.rollout_bytes,
+            });
+        }
+    }
+    issues.sort_by_key(|issue| std::cmp::Reverse(issue.updated_at));
+
+    Ok(GuiVisibilityReport {
+        provider: "claude".to_string(),
+        projects_root: projects_root.to_string_lossy().into_owned(),
+        scanned_sessions: scanned,
+        visible_sessions: visible,
+        sidechain_sessions: sidechain,
+        empty_sessions: empty,
+        unfixable_sessions: unfixable,
+        issues,
+    })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn repair_claude_gui_visibility(
+    claude_dir: String,
+    dry_run: bool,
+    session_ids: Option<Vec<String>>,
+) -> AppResult<GuiVisibilityFixReport> {
+    let report = diagnose_claude_gui_visibility(claude_dir)?;
+    let filter: Option<BTreeSet<String>> = session_ids.map(|ids| ids.into_iter().collect());
+
+    let mut fixed = 0u32;
+    let mut skipped = 0u32;
+    let mut fixed_ids = Vec::new();
+    let mut errors = Vec::new();
+
+    for issue in &report.issues {
+        if let Some(filter) = &filter {
+            if !filter.contains(&issue.session_id) {
+                skipped += 1;
+                continue;
+            }
+        }
+        if !dry_run {
+            if let Err(err) = append_custom_title(
+                Path::new(&issue.path),
+                &issue.session_id,
+                &issue.proposed_title,
+            ) {
+                errors.push(format!("{}: {}", issue.session_id, err));
+                continue;
+            }
+        }
+        fixed += 1;
+        fixed_ids.push(issue.session_id.clone());
+    }
+
+    Ok(GuiVisibilityFixReport {
+        provider: "claude".to_string(),
+        fixed,
+        skipped,
+        dry_run,
+        fixed_session_ids: fixed_ids,
+        errors,
+    })
+}
+
+/// 与 VS Code 插件"重命名会话"的写入格式一致：
+/// 在 jsonl 末尾追加一行 `{"type":"custom-title","sessionId":...,"customTitle":...}`。
+fn append_custom_title(path: &Path, session_id: &str, title: &str) -> AppResult<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    let needs_newline = {
+        let mut file = fs::File::open(path)?;
+        let size = file.metadata()?.len();
+        if size == 0 {
+            false
+        } else {
+            file.seek(SeekFrom::Start(size - 1))?;
+            let mut last = [0u8; 1];
+            file.read_exact(&mut last)?;
+            last[0] != b'\n'
+        }
+    };
+    let record = serde_json::json!({
+        "type": "custom-title",
+        "sessionId": session_id,
+        "customTitle": title,
+    });
+    let mut file = fs::OpenOptions::new().append(true).open(path)?;
+    if needs_newline {
+        file.write_all(b"\n")?;
+    }
+    file.write_all(record.to_string().as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all().ok();
+    Ok(())
 }
 
 fn salvage_id_from_filename(p: &Path) -> Option<String> {
@@ -3785,6 +4226,156 @@ mod tests {
 
         fs::remove_dir_all(&claude).ok();
         Ok(())
+    }
+
+    const GUI_TEST_ID_VISIBLE: &str = "11111111-2222-4333-8444-555555555555";
+    const GUI_TEST_ID_HIDDEN: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const GUI_TEST_ID_SIDECHAIN: &str = "99999999-8888-4777-8666-555555555555";
+
+    /// 构造一个对 VS Code 插件不可见的会话：
+    /// 头部 64KB 被超大 meta 行占满，真正的用户消息在窗口之外，且没有任何标题记录。
+    fn write_gui_hidden_session(claude: &Path) -> AppResult<PathBuf> {
+        let dir = claude.join("projects").join("gui-project");
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{GUI_TEST_ID_HIDDEN}.jsonl"));
+        let filler = "x".repeat(80_000);
+        let meta_line = serde_json::json!({
+            "sessionId": GUI_TEST_ID_HIDDEN,
+            "cwd": "F:\\project\\example",
+            "timestamp": "2026-04-22T00:00:00Z",
+            "type": "user",
+            "isMeta": true,
+            "message": {"role": "user", "content": filler}
+        });
+        let user_line = serde_json::json!({
+            "sessionId": GUI_TEST_ID_HIDDEN,
+            "timestamp": "2026-04-22T00:01:00Z",
+            "type": "user",
+            "message": {"role": "user", "content": "帮我修复 GUI 列表"}
+        });
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&meta_line)?,
+                serde_json::to_string(&user_line)?
+            ),
+        )?;
+        Ok(path)
+    }
+
+    #[test]
+    fn gui_visibility_diagnose_and_repair() -> AppResult<()> {
+        let claude = temp_codex_dir("cc-session-manager-claude-gui-test");
+
+        // 可见会话：首行即普通用户消息
+        write_claude_session(&claude, GUI_TEST_ID_VISIBLE)?;
+        // 不可见会话：标题链全部落空
+        let hidden_path = write_gui_hidden_session(&claude)?;
+        // 子代理会话：首行带 isSidechain，GUI 本就不展示
+        let side_dir = claude.join("projects").join("gui-project");
+        let side_line = serde_json::json!({
+            "sessionId": GUI_TEST_ID_SIDECHAIN,
+            "isSidechain": true,
+            "timestamp": "2026-04-22T00:00:00Z",
+            "type": "user",
+            "message": {"role": "user", "content": "subagent"}
+        });
+        fs::write(
+            side_dir.join(format!("{GUI_TEST_ID_SIDECHAIN}.jsonl")),
+            format!("{}\n", serde_json::to_string(&side_line)?),
+        )?;
+
+        let claude_str = claude.to_string_lossy().into_owned();
+        let report = diagnose_claude_gui_visibility(claude_str.clone())?;
+        assert_eq!(report.scanned_sessions, 3);
+        assert_eq!(report.visible_sessions, 1);
+        assert_eq!(report.sidechain_sessions, 1);
+        assert_eq!(report.issues.len(), 1);
+        let issue = &report.issues[0];
+        assert_eq!(issue.session_id, GUI_TEST_ID_HIDDEN);
+        assert_eq!(issue.proposed_title, "帮我修复 GUI 列表");
+
+        // dry_run 不写入
+        let preview = repair_claude_gui_visibility(claude_str.clone(), true, None)?;
+        assert_eq!(preview.fixed, 1);
+        assert!(preview.dry_run);
+        assert!(!fs::read_to_string(&hidden_path)?.contains("custom-title"));
+
+        // 实际修复：追加 custom-title 记录，且之后诊断不再报告
+        let result = repair_claude_gui_visibility(claude_str.clone(), false, None)?;
+        assert_eq!(result.fixed, 1);
+        assert!(result.errors.is_empty());
+        let content = fs::read_to_string(&hidden_path)?;
+        let last_line = content.lines().last().unwrap();
+        let record: Value = serde_json::from_str(last_line)?;
+        assert_eq!(
+            record.get("type").and_then(Value::as_str),
+            Some("custom-title")
+        );
+        assert_eq!(
+            record.get("customTitle").and_then(Value::as_str),
+            Some("帮我修复 GUI 列表")
+        );
+        assert_eq!(
+            record.get("sessionId").and_then(Value::as_str),
+            Some(GUI_TEST_ID_HIDDEN)
+        );
+
+        let after = diagnose_claude_gui_visibility(claude_str)?;
+        assert_eq!(after.issues.len(), 0);
+        assert_eq!(after.visible_sessions, 2);
+
+        fs::remove_dir_all(&claude).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn gui_title_extraction_matches_extension_semantics() {
+        // ta()：取最后一次出现的值，并处理转义
+        let tail = r#"{"type":"custom-title","customTitle":"old"}
+{"type":"custom-title","customTitle":"new \"quoted\""}"#;
+        assert_eq!(
+            gui_last_string_field(tail, "customTitle").as_deref(),
+            Some("new \"quoted\"")
+        );
+
+        // jie()：跳过 isMeta / tool_result / isCompactSummary / 标签开头文本
+        let head = concat!(
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"meta"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"x"}]}}"#,
+            "\n",
+            r#"{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"compact"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>out</local-command-stdout>"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"真正的标题"}}"#,
+            "\n",
+        );
+        assert_eq!(gui_head_title(head).as_deref(), Some("真正的标题"));
+
+        // 命令消息只作为兜底标题
+        let head_cmd = concat!(
+            r#"{"type":"user","message":{"role":"user","content":"<command-message>run</command-message><command-name>/compact</command-name>"}}"#,
+            "\n",
+        );
+        assert_eq!(gui_head_title(head_cmd).as_deref(), Some("/compact"));
+
+        // bash 输入展示为 "! cmd"
+        let head_bash = concat!(
+            r#"{"type":"user","message":{"role":"user","content":"<bash-input>ls -la</bash-input>"}}"#,
+            "\n",
+        );
+        assert_eq!(gui_head_title(head_bash).as_deref(), Some("! ls -la"));
+
+        // 空标题链 → 不可见
+        assert_eq!(gui_visible_title("", ""), None);
+        // summary 仅在尾部窗口生效
+        assert_eq!(
+            gui_visible_title("", r#"{"type":"summary","summary":"总结标题"}"#).as_deref(),
+            Some("总结标题")
+        );
     }
 }
 

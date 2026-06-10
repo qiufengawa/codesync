@@ -1311,8 +1311,8 @@ fn bundle_unpack() -> MenuResult<()> {
 
 fn repair_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
     loop {
-        print_header("修复 / 诊断（Codex）", &[]);
-        println!("1. 查看 provider 信息");
+        print_header("修复 / 诊断", &[]);
+        println!("1. 查看 provider 信息（Codex）");
         println!("2. 诊断 Codex 状态");
         println!("3. 修复 session_index.jsonl");
         println!("4. 重建 threads 表");
@@ -1321,8 +1321,10 @@ fn repair_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
         println!("7. 批量克隆到当前 provider");
         println!("8. 从事件创建回溯分支");
         println!("9. 家族分支管理");
-        println!("10. 返回上一层");
-        println!("11. 返回主菜单");
+        println!("10. Claude：GUI 会话列表修复");
+        println!("11. Claude：history.jsonl 残留清理");
+        println!("12. 返回上一层");
+        println!("13. 返回主菜单");
         println!("0. 退出");
 
         match prompt("请选择: ")?.as_str() {
@@ -1338,8 +1340,10 @@ fn repair_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
                 Flow::Back => {}
                 other => return Ok(other),
             },
-            "10" => return Ok(Flow::Back),
-            "11" => return Ok(Flow::Main),
+            "10" => repair_claude_gui(ctx)?,
+            "11" => repair_claude_history(ctx)?,
+            "12" => return Ok(Flow::Back),
+            "13" => return Ok(Flow::Main),
             "0" => return Ok(Flow::Exit),
             _ => {
                 println!("无效选择。");
@@ -1347,6 +1351,77 @@ fn repair_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
             }
         }
     }
+}
+
+/// Claude GUI（VS Code 插件等）会话列表可见性诊断与修复。
+fn repair_claude_gui(ctx: &MenuContext) -> MenuResult<()> {
+    let report =
+        repair::diagnose_claude_gui_visibility(ctx.claude_dir.clone()).map_err(to_string)?;
+    println!("projects_root      {}", report.projects_root);
+    println!("scanned_sessions   {}", report.scanned_sessions);
+    println!("visible_sessions   {}", report.visible_sessions);
+    println!("sidechain_sessions {}", report.sidechain_sessions);
+    println!("empty_sessions     {}", report.empty_sessions);
+    println!("unfixable_sessions {}", report.unfixable_sessions);
+    println!("invisible_fixable  {}", report.issues.len());
+    if report.issues.is_empty() {
+        println!("所有会话都能在 GUI 历史列表中正常显示。");
+        return pause().map(|_| ());
+    }
+    println!("以下会话在 GUI 历史列表中不可见，将补写的标题来自会话内容：");
+    for issue in &report.issues {
+        println!(
+            "  {}  [{}]  {}",
+            issue.session_id, issue.project_dir, issue.proposed_title
+        );
+    }
+    if !confirm_default_no("是否为以上会话补写 custom-title 记录（恢复 GUI 显示）？")?
+    {
+        return pause().map(|_| ());
+    }
+    let dry_run = choose_dry_run("补写 custom-title 记录")?;
+    let result = repair::repair_claude_gui_visibility(ctx.claude_dir.clone(), dry_run, None)
+        .map_err(to_string)?;
+    println!(
+        "fixed={} skipped={} dry_run={}",
+        result.fixed, result.skipped, result.dry_run
+    );
+    for error in result.errors {
+        println!("error {error}");
+    }
+    pause()?;
+    Ok(())
+}
+
+/// Claude history.jsonl 残留诊断与清理。
+fn repair_claude_history(ctx: &MenuContext) -> MenuResult<()> {
+    let report =
+        repair::diagnose_claude_history_orphans(ctx.claude_dir.clone()).map_err(to_string)?;
+    println!("history_path   {}", report.history_path);
+    println!("session_count  {}", report.session_count);
+    println!("history_rows   {}", report.history_rows);
+    println!("linked_rows    {}", report.linked_rows);
+    println!("orphan_rows    {}", report.orphan_rows);
+    println!("untracked_rows {}", report.untracked_rows);
+    if report.orphan_rows == 0 {
+        println!("暂未发现 Claude history 残留。");
+        return pause().map(|_| ());
+    }
+    for id in &report.orphan_session_ids {
+        println!("  orphan {id}");
+    }
+    if !confirm_default_no("是否清理这些残留历史行？")? {
+        return pause().map(|_| ());
+    }
+    let dry_run = choose_dry_run("清理 Claude history 残留")?;
+    let result =
+        repair::prune_claude_history_orphans(ctx.claude_dir.clone(), dry_run).map_err(to_string)?;
+    println!(
+        "removed_rows={} dry_run={}",
+        result.removed_rows, result.dry_run
+    );
+    pause()?;
+    Ok(())
 }
 
 fn repair_provider_info(ctx: &MenuContext) -> MenuResult<()> {

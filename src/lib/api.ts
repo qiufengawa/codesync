@@ -299,6 +299,36 @@ export type HistoryPruneReport = {
   orphan_session_ids: string[];
 };
 
+export type GuiVisibilityIssue = {
+  session_id: string;
+  path: string;
+  project_dir: string;
+  cwd: string;
+  proposed_title: string;
+  updated_at: number;
+  file_size: number;
+};
+
+export type GuiVisibilityReport = {
+  provider: SessionProvider;
+  projects_root: string;
+  scanned_sessions: number;
+  visible_sessions: number;
+  sidechain_sessions: number;
+  empty_sessions: number;
+  unfixable_sessions: number;
+  issues: GuiVisibilityIssue[];
+};
+
+export type GuiVisibilityFixReport = {
+  provider: SessionProvider;
+  fixed: number;
+  skipped: number;
+  dry_run: boolean;
+  fixed_session_ids: string[];
+  errors: string[];
+};
+
 export type DiagnosticReport = {
   rollout_count: number;
   archived_rollout_count: number;
@@ -732,6 +762,14 @@ export const api = {
     invokeCommand<HistoryOrphanReport>("diagnose_claude_history_orphans", { claudeDir }),
   pruneClaudeHistoryOrphans: (claudeDir: string, dryRun: boolean) =>
     invokeCommand<HistoryPruneReport>("prune_claude_history_orphans", { claudeDir, dryRun }),
+  diagnoseClaudeGuiVisibility: (claudeDir: string) =>
+    invokeCommand<GuiVisibilityReport>("diagnose_claude_gui_visibility", { claudeDir }),
+  repairClaudeGuiVisibility: (claudeDir: string, dryRun: boolean, sessionIds?: string[]) =>
+    invokeCommand<GuiVisibilityFixReport>("repair_claude_gui_visibility", {
+      claudeDir,
+      dryRun,
+      sessionIds: sessionIds ?? null,
+    }),
   cloneSessionForProvider: (p: {
     codex_dir: string;
     session_id: string;
