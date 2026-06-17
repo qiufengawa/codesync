@@ -22,7 +22,7 @@ export async function pickDirectoryPath(options: {
 
   return promptPath(
     options.webPrompt ??
-      "浏览器 Web UI 不能打开系统目录选择器。请输入运行 cc-sessions webui 的那台机器上可访问的目录路径。",
+      "浏览器 Web UI 不能打开系统目录选择器。请输入运行 codesync-cli webui 的那台机器上可访问的目录路径。",
     options.defaultPath,
   );
 }
@@ -44,7 +44,7 @@ export async function pickFilePath(options: {
 
   return promptPath(
     options.webPrompt ??
-      "浏览器 Web UI 不能打开系统文件选择器。请输入运行 cc-sessions webui 的那台机器上可访问的文件路径。",
+      "浏览器 Web UI 不能打开系统文件选择器。请输入运行 codesync-cli webui 的那台机器上可访问的文件路径。",
     options.defaultPath,
   );
 }
@@ -66,7 +66,7 @@ export async function saveFilePath(options: {
 
   return promptPath(
     options.webPrompt ??
-      "浏览器 Web UI 不能打开系统保存对话框。请输入运行 cc-sessions webui 的那台机器上要写入的文件路径。",
+      "浏览器 Web UI 不能打开系统保存对话框。请输入运行 codesync-cli webui 的那台机器上要写入的文件路径。",
     options.defaultPath,
   );
 }

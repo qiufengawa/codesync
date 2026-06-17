@@ -75,7 +75,7 @@ fn snapshot_sqlite_db(
 ) -> AppResult<(PathBuf, Option<SqliteSnapshot>)> {
     let source_db = source_dir.join(db_name);
     let snapshot_dir = std::env::temp_dir().join(format!(
-        "cc-session-manager-sqlite-{}-{}-{}",
+        "codesync-sqlite-{}-{}-{}",
         sanitize_snapshot_name(db_name),
         std::process::id(),
         SystemTime::now()

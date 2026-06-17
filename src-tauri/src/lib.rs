@@ -7,6 +7,7 @@ pub mod fs_ops;
 pub mod history;
 pub mod logs_db;
 pub mod models;
+pub mod opencode_sessions;
 pub mod paths;
 pub mod repair;
 pub mod rollout;
@@ -43,8 +44,10 @@ pub fn run() {
             settings::app_version,
             settings::default_codex_dir,
             settings::default_claude_dir,
+            settings::default_opencode_dir,
             settings::validate_codex_dir,
             settings::validate_claude_dir,
+            settings::validate_opencode_dir,
             sessions::list_sessions,
             sessions::group_sessions_by_project,
             sessions::search_sessions,

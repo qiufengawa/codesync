@@ -18,7 +18,7 @@ type Handlers = {
   onCopyResume: (s: SessionSummary) => void;
   onRevealCwd: (s: SessionSummary) => void;
   onArchiveToggle?: (s: SessionSummary) => void;
-  onBackup: (s: SessionSummary) => void;
+  onBackup?: (s: SessionSummary) => void;
   onDelete?: (s: SessionSummary) => void;
   onClone?: (s: SessionSummary) => void;
   onOpenFamily?: (s: SessionSummary) => void;
@@ -122,7 +122,7 @@ function TimeView({
   }, [sessions]);
 
   return (
-    <div className="min-w-0 max-w-full space-y-5 overflow-hidden px-6 py-5">
+    <div className="w-full px-6 py-8">
       {groups.map((g) => (
         <Collapsible
           key={g.key}
@@ -133,27 +133,24 @@ function TimeView({
           className="min-w-0"
         >
           <CollapsibleTrigger asChild>
-            <button className="group flex w-full items-center gap-2.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40">
+            <button className="group flex w-full items-center gap-2 px-1 py-2 transition-colors hover:bg-muted/20">
               <ChevronDown
                 className={cn(
-                  "h-3.5 w-3.5 shrink-0 text-muted-foreground/80 transition-transform duration-200 group-hover:text-foreground",
+                  "h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform",
                   collapsed[g.key] && "-rotate-90",
                 )}
               />
-              <h2 className="text-[13px] font-semibold tracking-tight text-foreground">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
                 {bucketLabel[g.key]}
               </h2>
-              <span className="inline-flex h-5 min-w-[1.5rem] items-center justify-center rounded-md border border-border/60 bg-muted/40 px-1.5 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+              <span className="text-[11px] font-light tabular-nums text-muted-foreground/50">
                 {g.items.length}
               </span>
-              <div
-                aria-hidden="true"
-                className="ml-1 h-px flex-1 bg-gradient-to-r from-border via-border/60 to-transparent"
-              />
+              <div aria-hidden="true" className="ml-2 h-px flex-1 bg-border/40" />
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent className="data-[state=open]:animate-accordion-down data-[state=closed]:animate-accordion-up overflow-hidden">
-            <div className="mt-3 min-w-0 space-y-3">
+            <div className="mt-0 min-w-0 border-t border-border/30">
               {g.items.map((s) => (
                 <SessionCard
                   key={s.id}
@@ -204,7 +201,7 @@ function ProjectView({
   }, [sessions]);
 
   return (
-    <div className="min-w-0 max-w-full space-y-3 overflow-hidden px-6 py-5">
+    <div className="w-full space-y-1 px-6 py-8">
       {groups.map((g) => (
         <ProjectGroupView
           key={g.cwd}
@@ -243,7 +240,7 @@ function SizeView({
   );
 
   return (
-    <div className="min-w-0 max-w-full space-y-3 overflow-hidden px-6 py-5">
+    <div className="w-full border-t border-border/30 px-0 py-0">
       {sorted.map((s) => (
         <SessionCard
           key={s.id}

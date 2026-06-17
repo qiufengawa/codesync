@@ -79,6 +79,7 @@ export function StatsDashboard() {
       provider,
       codex_dir: settings.codex_dir,
       claude_dir: settings.claude_dir,
+      opencode_dir: settings.opencode_dir,
       from_ts: from,
       to_ts: to,
       cwd_filter: [] as string[],
@@ -100,7 +101,7 @@ export function StatsDashboard() {
         setHeat(h);
       })
       .finally(() => setLoading(false));
-  }, [settings?.codex_dir, settings?.claude_dir, provider, range, bucket, includeArchived, tick]);
+  }, [settings?.codex_dir, settings?.claude_dir, settings?.opencode_dir, provider, range, bucket, includeArchived, tick]);
 
   return (
     <div className="space-y-4 p-6">
@@ -110,6 +111,7 @@ export function StatsDashboard() {
             <TabsTrigger value="all">全部</TabsTrigger>
             <TabsTrigger value="codex">Codex</TabsTrigger>
             <TabsTrigger value="claude">Claude</TabsTrigger>
+            <TabsTrigger value="opencode">OpenCode</TabsTrigger>
           </TabsList>
         </Tabs>
         <Select value={range} onValueChange={(v) => setRange(v as Range)}>
@@ -396,6 +398,7 @@ function modelStatLabel(m: ModelStat): string {
 }
 
 function providerLabel(provider: string): string {
+  if (provider === "opencode") return "OpenCode";
   return provider === "claude" ? "Claude" : "Codex";
 }
 

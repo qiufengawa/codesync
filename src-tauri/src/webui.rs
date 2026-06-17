@@ -14,11 +14,11 @@ use crate::error::{AppError, AppResult};
 use crate::models::{ImportMode, ProjectPathMapping, Settings, SwitchStrategy};
 use crate::{backup, bundle, family, fs_ops, repair, rollout, sessions, settings, stats};
 
-const WEBUI_TOKEN_HEADER: &str = "X-CC-Sessions-Webui-Token";
-const WEBUI_SETTINGS_ENV: &str = "CC_SESSIONS_WEBUI_SETTINGS";
-const WEBUI_SETTINGS_FILE: &str = "cc-sessions-webui-settings.json";
-const WEBUI_PORTABLE_MARKER: &str = "cc-sessions.portable";
-const WEBUI_CONFIG_DIR: &str = "cc-sessions";
+const WEBUI_TOKEN_HEADER: &str = "X-CodeSync-Webui-Token";
+const WEBUI_SETTINGS_ENV: &str = "CODESYNC_WEBUI_SETTINGS";
+const WEBUI_SETTINGS_FILE: &str = "codesync-webui-settings.json";
+const WEBUI_PORTABLE_MARKER: &str = "codesync.portable";
+const WEBUI_CONFIG_DIR: &str = "codesync";
 
 #[derive(Debug, Clone)]
 pub struct WebuiConfig {
@@ -29,6 +29,8 @@ pub struct WebuiConfig {
     pub codex_dir_explicit: bool,
     pub claude_dir: String,
     pub claude_dir_explicit: bool,
+    pub opencode_dir: String,
+    pub opencode_dir_explicit: bool,
 }
 
 struct WebuiState {
@@ -55,7 +57,14 @@ pub fn run(config: WebuiConfig) -> AppResult<()> {
     if !settings_exists || config.claude_dir_explicit {
         initial_settings.claude_dir = config.claude_dir;
     }
-    if !settings_exists || config.codex_dir_explicit || config.claude_dir_explicit {
+    if !settings_exists || config.opencode_dir_explicit {
+        initial_settings.opencode_dir = config.opencode_dir;
+    }
+    if !settings_exists
+        || config.codex_dir_explicit
+        || config.claude_dir_explicit
+        || config.opencode_dir_explicit
+    {
         settings::write_settings_file(&settings_file, &initial_settings)?;
     }
 
@@ -155,26 +164,33 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
         }
         "default_codex_dir" => to_value(settings::default_codex_dir()),
         "default_claude_dir" => to_value(settings::default_claude_dir()),
+        "default_opencode_dir" => to_value(settings::default_opencode_dir()),
         "validate_codex_dir" => {
             to_result_value(settings::validate_codex_dir(string_arg(&args, "path")?))
         }
         "validate_claude_dir" => {
             to_result_value(settings::validate_claude_dir(string_arg(&args, "path")?))
         }
+        "validate_opencode_dir" => {
+            to_result_value(settings::validate_opencode_dir(string_arg(&args, "path")?))
+        }
         "list_sessions" => to_result_value(sessions::list_sessions(
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
         )),
         "group_sessions_by_project" => to_result_value(sessions::group_sessions_by_project(
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
         )),
         "search_sessions" => to_result_value(sessions::search_sessions(
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             string_arg(&args, "query")?,
         )),
         "set_archived" => to_result_value(sessions::set_archived(
@@ -187,12 +203,14 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             string_arg(&args, "id")?,
         )),
         "delete_sessions" => to_result_value(sessions::delete_sessions(
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             arg(&args, "ids")?,
         )),
         "preview_session_head" => to_result_value(rollout::preview_session_head(
@@ -245,6 +263,7 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             opt_i64_arg(&args, "fromTs")?,
             opt_i64_arg(&args, "toTs")?,
             arg(&args, "cwdFilter")?,
@@ -254,6 +273,7 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             opt_i64_arg(&args, "fromTs")?,
             opt_i64_arg(&args, "toTs")?,
             string_arg(&args, "bucket")?,
@@ -264,6 +284,7 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             opt_i64_arg(&args, "fromTs")?,
             opt_i64_arg(&args, "toTs")?,
             usize_arg(&args, "limit")?,
@@ -274,6 +295,7 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             opt_i64_arg(&args, "fromTs")?,
             opt_i64_arg(&args, "toTs")?,
             arg(&args, "cwdFilter")?,
@@ -283,6 +305,7 @@ fn dispatch_invoke(state: &WebuiState, command: &str, args: Value) -> AppResult<
             opt_string_arg(&args, "provider")?,
             string_arg(&args, "codexDir")?,
             opt_string_arg(&args, "claudeDir")?,
+            opt_string_arg(&args, "opencodeDir")?,
             opt_i64_arg(&args, "fromTs")?,
             opt_i64_arg(&args, "toTs")?,
             arg(&args, "cwdFilter")?,
@@ -519,7 +542,7 @@ fn inject_runtime_config(mut html: String, state: &WebuiState) -> std::io::Resul
         "defaultProvider": &state.default_provider,
     });
     let script = format!(
-        "<script>window.__CC_SESSIONS_WEBUI__ = {};</script>\n",
+        "<script>window.__CODESYNC_WEBUI__ = {};</script>\n",
         serde_json::to_string(&config).expect("runtime config is serializable")
     );
     let Some(pos) = html.find("</head>") else {
@@ -540,7 +563,7 @@ fn is_index_html(path: &Path) -> bool {
 
 fn resolve_dist_dir() -> AppResult<PathBuf> {
     let mut candidates = Vec::new();
-    if let Ok(raw) = env::var("CC_SESSIONS_WEBUI_DIST") {
+    if let Ok(raw) = env::var("CODESYNC_WEBUI_DIST") {
         if !raw.trim().is_empty() {
             candidates.push(PathBuf::from(raw));
         }
@@ -563,7 +586,7 @@ fn resolve_dist_dir() -> AppResult<PathBuf> {
     }
 
     Err(AppError::Other(
-        "找不到 Web UI 前端构建产物。请先在项目根目录运行 npm run build，或把 dist 目录放在 cc-sessions 可执行文件旁。".into(),
+        "找不到 Web UI 前端构建产物。请先在项目根目录运行 npm run build，或把 dist 目录放在 codesync-cli 可执行文件旁。".into(),
     ))
 }
 
@@ -574,10 +597,10 @@ fn resolve_settings_file() -> AppResult<PathBuf> {
         }
     }
     let exe = env::current_exe()
-        .map_err(|err| AppError::Other(format!("无法确定 cc-sessions 可执行文件路径: {err}")))?;
+        .map_err(|err| AppError::Other(format!("无法确定 codesync-cli 可执行文件路径: {err}")))?;
     let exe_dir = exe
         .parent()
-        .ok_or_else(|| AppError::Other("无法确定 cc-sessions 可执行文件目录".to_string()))?;
+        .ok_or_else(|| AppError::Other("无法确定 codesync-cli 可执行文件目录".to_string()))?;
     if exe_dir.join(WEBUI_PORTABLE_MARKER).is_file() {
         return Ok(exe_dir.join(WEBUI_SETTINGS_FILE));
     }

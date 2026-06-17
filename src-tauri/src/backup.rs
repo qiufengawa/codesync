@@ -15,6 +15,7 @@ use crate::state_db;
 
 const PROVIDER_CODEX: &str = "codex";
 const PROVIDER_CLAUDE: &str = "claude";
+const PROVIDER_OPENCODE: &str = "opencode";
 
 struct BackupThread {
     id: String,
@@ -46,6 +47,11 @@ pub fn create_backup(
     name: Option<String>,
     note: Option<String>,
 ) -> AppResult<BackupSummary> {
+    if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
+        return Err(AppError::Other(
+            "OpenCode 备份暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
+        ));
+    }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
             claude_dir
@@ -613,6 +619,9 @@ pub fn restore_session(
     let provider = provider
         .as_deref()
         .unwrap_or_else(|| manifest_session_provider(&manifest, target));
+    if provider == PROVIDER_OPENCODE {
+        return Err(AppError::Other("OpenCode 备份还原暂未开放".into()));
+    }
     if provider == PROVIDER_CLAUDE {
         restore_one_claude(&backup, &claude, target, overwrite)
     } else {
@@ -640,6 +649,19 @@ pub fn restore_all(
         let session_provider = provider
             .as_deref()
             .unwrap_or_else(|| manifest_session_provider(&manifest, s));
+        if session_provider == PROVIDER_OPENCODE {
+            out.push(RestoreResult {
+                id: s.id.clone(),
+                ok: false,
+                threads_inserted: false,
+                logs_inserted: 0,
+                history_appended: 0,
+                rollout_copied: false,
+                conflict: false,
+                error: Some("OpenCode 备份还原暂未开放".into()),
+            });
+            continue;
+        }
         out.push(
             (if session_provider == PROVIDER_CLAUDE {
                 restore_one_claude(&backup, &claude, s, overwrite)
@@ -1013,7 +1035,7 @@ mod tests {
 
     #[test]
     fn backs_up_and_restores_claude_session() -> AppResult<()> {
-        let root = temp_dir("cc-session-manager-claude-backup-test");
+        let root = temp_dir("codesync-claude-backup-test");
         let source_claude = root.join("source-claude");
         let restore_claude = root.join("restore-claude");
         let backup_dir = root.join("backups");

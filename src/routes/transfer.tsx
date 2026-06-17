@@ -55,8 +55,22 @@ export default function TransferRoute({ provider = "codex" }: { provider?: Sessi
   const settings = useSettings((s) => s.settings);
   const codexDir = settings?.codex_dir ?? "";
   const claudeDir = settings?.claude_dir ?? "";
-  const providerLabel = provider === "codex" ? "Codex" : "Claude";
-  const providerDir = provider === "codex" ? codexDir : claudeDir;
+  const opencodeDir = settings?.opencode_dir ?? "";
+  const providerLabel = provider === "codex" ? "Codex" : provider === "claude" ? "Claude" : "OpenCode";
+  const providerDir = provider === "codex" ? codexDir : provider === "claude" ? claudeDir : (settings?.opencode_dir ?? "");
+
+  if (provider === "opencode") {
+    return (
+      <>
+        <TopBar title="OpenCode 导出 / 导入" showListTools={false} />
+        <EmptyState
+          icon={<Package className="h-10 w-10" />}
+          title="OpenCode 导出 / 导入暂未开放"
+          description="OpenCode 会话保存在 SQLite 数据库中；当前仅开放只读浏览、搜索、预览、统计和显式删除。"
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -79,10 +93,10 @@ export default function TransferRoute({ provider = "codex" }: { provider?: Sessi
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="export">
-                <ExportPanel provider={provider} codexDir={codexDir} claudeDir={claudeDir} />
+                <ExportPanel provider={provider} codexDir={codexDir} claudeDir={claudeDir} opencodeDir={opencodeDir} />
               </TabsContent>
               <TabsContent value="import">
-                <ImportPanel provider={provider} codexDir={codexDir} claudeDir={claudeDir} />
+                <ImportPanel provider={provider} codexDir={codexDir} claudeDir={claudeDir} opencodeDir={opencodeDir} />
               </TabsContent>
             </Tabs>
           )}
@@ -98,10 +112,12 @@ function ExportPanel({
   provider,
   codexDir,
   claudeDir,
+  opencodeDir,
 }: {
   provider: SessionProvider;
   codexDir: string;
   claudeDir: string;
+  opencodeDir: string;
 }) {
   const { sessions, loading: loadingSessions } = useSessions(provider, "");
   const [outDir, setOutDir] = useState("");
@@ -188,6 +204,7 @@ function ExportPanel({
       provider,
       codex_dir: codexDir,
       claude_dir: claudeDir,
+      opencode_dir: opencodeDir,
       out_dir: outDir,
       ids,
       machine_label: machineLabel || undefined,
@@ -220,6 +237,7 @@ function ExportPanel({
         provider,
         codex_dir: codexDir,
         claude_dir: claudeDir,
+        opencode_dir: opencodeDir,
         out_dir: outDir,
         machine_label: machineLabel || undefined,
         export_group: exportGroup || undefined,
@@ -243,7 +261,7 @@ function ExportPanel({
     const zipPath = await saveFilePath({
       defaultPath: joinPath(outDir, `${provider}-bundles-${Date.now()}.zip`),
       filters: [{ name: "Zip", extensions: ["zip"] }],
-      webPrompt: "请输入要写入的 zip 文件路径。该路径必须能被运行 cc-sessions webui 的环境访问。",
+      webPrompt: "请输入要写入的 zip 文件路径。该路径必须能被运行 codesync-cli webui 的环境访问。",
     });
     if (!zipPath) return;
     setRunning(true);
@@ -498,10 +516,12 @@ function ImportPanel({
   provider,
   codexDir,
   claudeDir,
+  opencodeDir,
 }: {
   provider: SessionProvider;
   codexDir: string;
   claudeDir: string;
+  opencodeDir: string;
 }) {
   const [srcDir, setSrcDir] = useState("");
   const [items, setItems] = useState<BundleListItem[]>([]);
@@ -522,7 +542,7 @@ function ImportPanel({
   const pickZip = async () => {
     const picked = await pickFilePath({
       filters: [{ name: "Zip", extensions: ["zip"] }],
-      webPrompt: "请输入要导入的 zip 文件路径。该路径必须能被运行 cc-sessions webui 的环境读取。",
+      webPrompt: "请输入要导入的 zip 文件路径。该路径必须能被运行 codesync-cli webui 的环境读取。",
     });
     if (picked) {
       setRunning(true);
@@ -583,7 +603,7 @@ function ImportPanel({
     const picked = await pickDirectoryPath({
       defaultPath: projectTargets[source] || undefined,
       title: `选择 ${basename(source)} 的目标项目目录`,
-      webPrompt: `请输入 ${basename(source)} 的目标项目目录。该路径必须能被运行 cc-sessions webui 的环境访问。`,
+      webPrompt: `请输入 ${basename(source)} 的目标项目目录。该路径必须能被运行 codesync-cli webui 的环境访问。`,
     });
     if (picked) {
       setProjectTargets((prev) => ({ ...prev, [source]: picked }));
@@ -614,6 +634,7 @@ function ImportPanel({
         src_dir: srcDir,
         codex_dir: codexDir,
         claude_dir: claudeDir,
+        opencode_dir: opencodeDir,
         mode,
         make_visible: provider === "codex" ? makeVisible : false,
         strict,

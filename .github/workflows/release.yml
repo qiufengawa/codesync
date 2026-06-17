@@ -91,13 +91,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: CC Sessions ${{ github.ref_name }}
+          releaseName: CodeSync ${{ github.ref_name }}
           releaseBody: |
             ## Changes
 
             ### 新增
             - 新增 Claude GUI 会话列表可见性诊断与修复能力，可检测因标题推导失败而从 VS Code 等 GUI 历史列表中消失的 Claude Code 会话。
-            - 新增 `cc-sessions repair claude-gui [--fix] [--dry-run]`，支持在 CLI 中预览或补写 `custom-title` 记录来恢复 GUI 显示。
+            - 新增 `codesync-cli repair claude-gui [--fix] [--dry-run]`，支持在 CLI 中预览或补写 `custom-title` 记录来恢复 GUI 显示。
             - 桌面端和浏览器 Web UI 的 Claude 修复页新增 GUI 会话列表修复入口，包含扫描统计、可修复会话列表、效果预览和确认修复流程。
 
             ### 改进
@@ -126,7 +126,7 @@ jobs:
             "Linux" { "linux" }
             default { throw "Unsupported runner OS: ${{ runner.os }}" }
           }
-          $asset = "release/cc-sessions-cli-v$version-$platform.zip"
+          $asset = "release/codesync-cli-v$version-$platform.zip"
           if (!(Test-Path $asset)) {
             throw "CLI package was not found: $asset"
           }
@@ -144,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $version = node -p "require('./package.json').version"
-          $asset = "release/cc-session-manager-portable-v$version-windows.exe"
+          $asset = "release/codesync-portable-v$version-windows.exe"
           if (!(Test-Path $asset)) {
             throw "Windows portable executable was not found: $asset"
           }

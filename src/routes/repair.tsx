@@ -71,7 +71,21 @@ import {
 import { copyText } from "@/lib/clipboard";
 
 export default function RepairRoute({ provider = "codex" }: { provider?: SessionProvider }) {
+  if (provider === "opencode") return <OpenCodeRepairRoute />;
   return provider === "claude" ? <ClaudeRepairRoute /> : <CodexRepairRoute />;
+}
+
+function OpenCodeRepairRoute() {
+  return (
+    <>
+      <TopBar title="OpenCode 修复" showListTools={false} />
+      <EmptyState
+        icon={<Wrench className="h-10 w-10" />}
+        title="OpenCode 修复暂未开放"
+        description="当前 OpenCode 支持浏览、搜索、预览、统计和显式删除；修复类写入操作保持禁用。"
+      />
+    </>
+  );
 }
 
 function CodexRepairRoute() {

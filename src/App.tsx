@@ -2,8 +2,8 @@ import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { Sidebar } from "@/components/Sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import { webuiDefaultProvider } from "@/lib/runtime";
 import { useSettings } from "@/stores/settings";
@@ -46,38 +46,42 @@ export default function App() {
   ]);
 
   return (
-    <SidebarProvider
-      tooltipDelayDuration={200}
-      className="h-full min-h-0 overflow-hidden"
-    >
-      <Sidebar />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Suspense fallback={<RouteLoading />}>
-          <Routes>
-            <Route path="/" element={<Navigate to={defaultSessionsPath} replace />} />
-            <Route path="/codex/sessions" element={<SessionsRoute provider="codex" />} />
-            <Route path="/codex/repair" element={<RepairRoute provider="codex" />} />
-            <Route path="/codex/backups" element={<BackupsRoute provider="codex" />} />
-            <Route path="/codex/backups/:name" element={<BackupDetailRoute provider="codex" />} />
-            <Route path="/codex/transfer" element={<TransferRoute provider="codex" />} />
-            <Route path="/claude/sessions" element={<SessionsRoute provider="claude" />} />
-            <Route path="/claude/repair" element={<RepairRoute provider="claude" />} />
-            <Route path="/claude/backups" element={<BackupsRoute provider="claude" />} />
-            <Route path="/claude/backups/:name" element={<BackupDetailRoute provider="claude" />} />
-            <Route path="/claude/transfer" element={<TransferRoute provider="claude" />} />
-            <Route path="/sessions" element={<Navigate to={defaultSessionsPath} replace />} />
-            <Route path="/repair" element={<Navigate to={defaultRepairPath} replace />} />
-            <Route path="/backups" element={<Navigate to={defaultBackupsPath} replace />} />
-            <Route path="/backups/:name" element={<BackupDetailRoute provider={defaultProvider} />} />
-            <Route path="/transfer" element={<Navigate to={defaultTransferPath} replace />} />
-            <Route path="/stats" element={<StatsRoute />} />
-            <Route path="*" element={<Navigate to="/codex/sessions" replace />} />
-          </Routes>
-        </Suspense>
-      </main>
-      <Toaster position="top-center" richColors closeButton />
-      {!settings && <LoadingBoot />}
-    </SidebarProvider>
+    <TooltipProvider delayDuration={200}>
+      <div className="flex h-full min-h-0 overflow-hidden">
+        <Sidebar />
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <Suspense fallback={<RouteLoading />}>
+            <Routes>
+              <Route path="/" element={<Navigate to={defaultSessionsPath} replace />} />
+              <Route path="/codex/sessions" element={<SessionsRoute provider="codex" />} />
+              <Route path="/codex/repair" element={<RepairRoute provider="codex" />} />
+              <Route path="/codex/backups" element={<BackupsRoute provider="codex" />} />
+              <Route path="/codex/backups/:name" element={<BackupDetailRoute provider="codex" />} />
+              <Route path="/codex/transfer" element={<TransferRoute provider="codex" />} />
+              <Route path="/claude/sessions" element={<SessionsRoute provider="claude" />} />
+              <Route path="/claude/repair" element={<RepairRoute provider="claude" />} />
+              <Route path="/claude/backups" element={<BackupsRoute provider="claude" />} />
+              <Route path="/claude/backups/:name" element={<BackupDetailRoute provider="claude" />} />
+              <Route path="/claude/transfer" element={<TransferRoute provider="claude" />} />
+              <Route path="/opencode/sessions" element={<SessionsRoute provider="opencode" />} />
+              <Route path="/opencode/repair" element={<RepairRoute provider="opencode" />} />
+              <Route path="/opencode/backups" element={<BackupsRoute provider="opencode" />} />
+              <Route path="/opencode/backups/:name" element={<BackupDetailRoute provider="opencode" />} />
+              <Route path="/opencode/transfer" element={<TransferRoute provider="opencode" />} />
+              <Route path="/sessions" element={<Navigate to={defaultSessionsPath} replace />} />
+              <Route path="/repair" element={<Navigate to={defaultRepairPath} replace />} />
+              <Route path="/backups" element={<Navigate to={defaultBackupsPath} replace />} />
+              <Route path="/backups/:name" element={<BackupDetailRoute provider={defaultProvider} />} />
+              <Route path="/transfer" element={<Navigate to={defaultTransferPath} replace />} />
+              <Route path="/stats" element={<StatsRoute />} />
+              <Route path="*" element={<Navigate to={defaultSessionsPath} replace />} />
+            </Routes>
+          </Suspense>
+        </main>
+        <Toaster position="top-center" richColors closeButton />
+        {!settings && <LoadingBoot />}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -114,7 +118,7 @@ function BootCard({ subtitle }: { subtitle: string }) {
           </svg>
         </div>
         <div className="boot-copy">
-          <div className="boot-title">CC Sessions</div>
+          <div className="boot-title">CodeSync</div>
           <div className="boot-subtitle">{subtitle}</div>
         </div>
       </div>

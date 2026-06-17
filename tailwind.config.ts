@@ -66,15 +66,15 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          "Segoe UI",
+          "Inter",
           "-apple-system",
           "BlinkMacSystemFont",
-          "Roboto",
+          "Segoe UI",
           "Helvetica Neue",
           "Arial",
           "sans-serif",
         ],
-        mono: ["Cascadia Code", "Consolas", "Menlo", "monospace"],
+        mono: ["JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", "Menlo", "monospace"],
       },
       keyframes: {
         "accordion-down": {

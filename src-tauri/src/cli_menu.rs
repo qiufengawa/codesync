@@ -1,11 +1,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
 
-use cc_session_manager_lib::models::{
+use codesync_lib::models::{
     BackupSummary, BundleListItem, ExportReport, ImportMode, PreviewEvent, ProjectGroup,
     SessionSummary, SwitchStrategy,
 };
-use cc_session_manager_lib::{
+use codesync_lib::{
     backup, bundle, family, paths, repair, rollout, sessions, settings, stats,
 };
 
@@ -45,14 +45,21 @@ struct MenuContext {
     provider: Option<String>,
     codex_dir: String,
     claude_dir: String,
+    opencode_dir: String,
     family_lock: family::FamilyLock,
 }
 
-pub fn run(provider: Option<String>, codex_dir: String, claude_dir: String) -> MenuResult<()> {
+pub fn run(
+    provider: Option<String>,
+    codex_dir: String,
+    claude_dir: String,
+    opencode_dir: String,
+) -> MenuResult<()> {
     let mut ctx = MenuContext {
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         family_lock: family::FamilyLock::default(),
     };
 
@@ -66,31 +73,34 @@ pub fn run(provider: Option<String>, codex_dir: String, claude_dir: String) -> M
 
 fn main_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
     print_header(
-        "CC Sessions",
+        "CodeSync",
         &[
             ("Codex 目录", ctx.codex_dir.as_str()),
             ("Claude 目录", ctx.claude_dir.as_str()),
+            ("OpenCode 目录", ctx.opencode_dir.as_str()),
         ],
     );
     println!("1. Codex 会话");
     println!("2. Claude 会话");
-    println!("3. 统计");
-    println!("4. 备份");
-    println!("5. 导入 / 导出 Bundle");
-    println!("6. 修复 / 诊断");
-    println!("7. 设置与路径检查");
-    println!("8. 帮助");
+    println!("3. OpenCode 会话");
+    println!("4. 统计");
+    println!("5. 备份");
+    println!("6. 导入 / 导出 Bundle");
+    println!("7. 修复 / 诊断");
+    println!("8. 设置与路径检查");
+    println!("9. 帮助");
     println!("0. 退出");
 
     match prompt("请选择: ")?.as_str() {
         "1" => run_child(|| sessions_menu(ctx, "codex")),
         "2" => run_child(|| sessions_menu(ctx, "claude")),
-        "3" => run_child(|| stats_menu(ctx)),
-        "4" => run_child(|| backup_menu(ctx)),
-        "5" => run_child(|| bundle_menu(ctx)),
-        "6" => run_child(|| repair_menu(ctx)),
-        "7" => run_child(|| settings_menu(ctx)),
-        "8" => {
+        "3" => run_child(|| sessions_menu(ctx, "opencode")),
+        "4" => run_child(|| stats_menu(ctx)),
+        "5" => run_child(|| backup_menu(ctx)),
+        "6" => run_child(|| bundle_menu(ctx)),
+        "7" => run_child(|| repair_menu(ctx)),
+        "8" => run_child(|| settings_menu(ctx)),
+        "9" => {
             show_interactive_help()?;
             Ok(Flow::Main)
         }
@@ -143,6 +153,7 @@ fn sessions_menu(ctx: &mut MenuContext, provider: &str) -> MenuResult<Flow> {
                     Some(provider.to_string()),
                     ctx.codex_dir.clone(),
                     Some(ctx.claude_dir.clone()),
+                    Some(ctx.opencode_dir.clone()),
                     query,
                 )
                 .map_err(to_string)?;
@@ -431,7 +442,7 @@ fn session_action_menu(
         if provider == "codex" {
             println!("6. 归档 / 取消归档");
         } else {
-            println!("6. 归档 / 取消归档（Claude 不支持）");
+            println!("6. 归档 / 取消归档（当前 provider 不支持）");
         }
         println!("7. 删除会话");
         println!("8. 返回上一层");
@@ -707,7 +718,7 @@ fn export_bundle_for_session(
 
 fn toggle_archived(ctx: &MenuContext, provider: &str, session: &SessionSummary) -> MenuResult<()> {
     if provider != "codex" {
-        println!("Claude 会话不支持归档。");
+        println!("当前 provider 不支持归档。");
         return pause().map(|_| ());
     }
     let target = !session.archived;
@@ -739,6 +750,7 @@ fn delete_session(ctx: &MenuContext, provider: &str, session: &SessionSummary) -
         Some(provider.to_string()),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         session.id.clone(),
     )
     .map_err(to_string)?;
@@ -801,6 +813,7 @@ fn delete_selected_sessions(
         Some(provider.to_string()),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         ids,
     )
     .map_err(to_string)?;
@@ -863,10 +876,12 @@ fn stats_provider(ctx: &MenuContext) -> MenuResult<String> {
     println!("1. 全部");
     println!("2. Codex");
     println!("3. Claude");
+    println!("4. OpenCode");
     match prompt("请选择: ")?.as_str() {
         "1" => Ok("all".to_string()),
         "2" => Ok("codex".to_string()),
         "3" => Ok("claude".to_string()),
+        "4" => Ok("opencode".to_string()),
         _ => Err("无效统计范围。".to_string()),
     }
 }
@@ -877,6 +892,7 @@ fn stats_kpi(ctx: &MenuContext) -> MenuResult<()> {
         Some(provider),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         None,
         None,
         Vec::new(),
@@ -901,6 +917,7 @@ fn stats_projects(ctx: &MenuContext) -> MenuResult<()> {
         Some(provider),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         None,
         None,
         limit,
@@ -928,6 +945,7 @@ fn stats_models(ctx: &MenuContext) -> MenuResult<()> {
         Some(provider),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         None,
         None,
         Vec::new(),
@@ -956,6 +974,7 @@ fn stats_timeseries(ctx: &MenuContext) -> MenuResult<()> {
         Some(provider),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         None,
         None,
         bucket,
@@ -982,6 +1001,7 @@ fn stats_heatmap(ctx: &MenuContext) -> MenuResult<()> {
         Some(provider),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
         None,
         None,
         Vec::new(),
@@ -1038,9 +1058,11 @@ fn backup_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
 fn choose_concrete_provider() -> MenuResult<String> {
     println!("1. Codex");
     println!("2. Claude");
+    println!("3. OpenCode");
     match prompt("请选择 provider: ")?.as_str() {
         "1" => Ok("codex".to_string()),
         "2" => Ok("claude".to_string()),
+        "3" => Ok("opencode".to_string()),
         _ => Err("无效 provider。".to_string()),
     }
 }
@@ -1822,7 +1844,7 @@ fn settings_menu(ctx: &mut MenuContext) -> MenuResult<Flow> {
 }
 
 fn settings_defaults() -> MenuResult<()> {
-    let defaults = cc_session_manager_lib::models::Settings::default();
+    let defaults = codesync_lib::models::Settings::default();
     println!("codex_dir              {}", defaults.codex_dir);
     println!("claude_dir             {}", defaults.claude_dir);
     println!("backup_dir             {}", defaults.backup_dir);
@@ -1834,6 +1856,7 @@ fn settings_defaults() -> MenuResult<()> {
 fn settings_validate(ctx: &MenuContext) -> MenuResult<()> {
     let codex = settings::validate_codex_dir(ctx.codex_dir.clone()).map_err(to_string)?;
     let claude = settings::validate_claude_dir(ctx.claude_dir.clone()).map_err(to_string)?;
+    let opencode = settings::validate_opencode_dir(ctx.opencode_dir.clone()).map_err(to_string)?;
     println!(
         "codex   valid={} state_db={} sessions={} threads={}",
         codex.valid, codex.has_state_db, codex.has_sessions, codex.threads_count
@@ -1842,20 +1865,24 @@ fn settings_validate(ctx: &MenuContext) -> MenuResult<()> {
         "claude  valid={} projects={} sessions={}",
         claude.valid, claude.has_sessions, claude.threads_count
     );
+    println!(
+        "opencode valid={} db={} sessions={}",
+        opencode.valid, opencode.has_state_db, opencode.threads_count
+    );
     pause()?;
     Ok(())
 }
 
 fn show_interactive_help() -> MenuResult<()> {
     print_header("帮助", &[]);
-    println!("直接运行 cc-sessions 会进入交互菜单。");
+    println!("直接运行 codesync-cli 会进入交互菜单。");
     println!("输入菜单序号即可进入下一层，例如 1 进入 Codex 会话。");
     println!("列表页支持 n 下一页、p 上一页、b 返回上一层、m 返回主菜单、0 退出。");
     println!("列表页支持 s 多选当前页序号、u 取消选择、c 清空选择、d 删除已选会话。");
     println!("会话列表默认显示主会话，选择子代理范围后只显示子代理会话。");
     println!("会话预览默认只显示用户和助手消息；选择“全部事件”才会显示工具调用。");
     println!("删除、覆盖恢复、清理和分支切换等危险操作需要输入 yes 确认。");
-    println!("脚本用法仍然保留，例如 cc-sessions list --limit 20。");
+    println!("脚本用法仍然保留，例如 codesync-cli list --limit 20。");
     pause().map(|_| ())
 }
 
@@ -1869,6 +1896,7 @@ fn load_sessions(
         Some(provider.to_string()),
         ctx.codex_dir.clone(),
         Some(ctx.claude_dir.clone()),
+        Some(ctx.opencode_dir.clone()),
     )
     .map_err(to_string)?;
     if !include_archived {
@@ -2070,6 +2098,7 @@ fn provider_label(provider: &str) -> &'static str {
     match provider {
         "codex" => "Codex",
         "claude" => "Claude",
+        "opencode" => "OpenCode",
         _ => "未知",
     }
 }

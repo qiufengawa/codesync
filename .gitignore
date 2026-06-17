@@ -4,7 +4,7 @@ dist-ssr/
 release/
 output/
 .vite/
-.remote-cc-sessions/
+.remote-codesync/
 .claude/
 codex-copy/
 

@@ -15,10 +15,16 @@ fn load_sessions(
     provider: &str,
     codex_dir: &str,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
 ) -> AppResult<Vec<SessionSummary>> {
     match provider {
         "codex" => {
-            crate::sessions::list_sessions(Some("codex".into()), codex_dir.to_string(), claude_dir)
+            crate::sessions::list_sessions(
+                Some("codex".into()),
+                codex_dir.to_string(),
+                claude_dir,
+                opencode_dir,
+            )
         }
         "claude" => {
             let claude = PathBuf::from(
@@ -27,14 +33,26 @@ fn load_sessions(
             );
             crate::claude_sessions::scan_sessions(&claude)
         }
+        "opencode" => {
+            let opencode = PathBuf::from(
+                opencode_dir
+                    .unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned()),
+            );
+            crate::opencode_sessions::scan_sessions(&opencode)
+        }
         "all" => {
             let mut out =
-                crate::sessions::list_sessions(Some("codex".into()), codex_dir.to_string(), None)?;
+                crate::sessions::list_sessions(Some("codex".into()), codex_dir.to_string(), None, None)?;
             let claude = PathBuf::from(
                 claude_dir
                     .unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned()),
             );
             out.extend(crate::claude_sessions::scan_sessions(&claude)?);
+            let opencode = PathBuf::from(
+                opencode_dir
+                    .unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned()),
+            );
+            out.extend(crate::opencode_sessions::scan_sessions(&opencode)?);
             Ok(out)
         }
         other => Err(AppError::Other(format!("不支持的 provider: {other}"))),
@@ -62,13 +80,14 @@ fn stat_sessions(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     cwd_filter: Vec<String>,
     include_archived: bool,
 ) -> AppResult<Vec<SessionSummary>> {
     let provider = provider_or_codex(provider);
-    let sessions = load_sessions(&provider, &codex_dir, claude_dir)?;
+    let sessions = load_sessions(&provider, &codex_dir, claude_dir, opencode_dir)?;
     Ok(filter_sessions(
         sessions,
         from_ts,
@@ -83,6 +102,7 @@ pub fn stats_kpi(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     cwd_filter: Vec<String>,
@@ -92,6 +112,7 @@ pub fn stats_kpi(
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         from_ts,
         to_ts,
         cwd_filter,
@@ -122,6 +143,7 @@ pub fn stats_timeseries(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     bucket: String,
@@ -132,6 +154,7 @@ pub fn stats_timeseries(
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         from_ts,
         to_ts,
         cwd_filter,
@@ -159,6 +182,7 @@ pub fn stats_by_project(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     limit: usize,
@@ -169,6 +193,7 @@ pub fn stats_by_project(
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         from_ts,
         to_ts,
         cwd_filter,
@@ -202,6 +227,7 @@ pub fn stats_by_model(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     cwd_filter: Vec<String>,
@@ -211,6 +237,7 @@ pub fn stats_by_model(
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         from_ts,
         to_ts,
         cwd_filter,
@@ -248,6 +275,7 @@ pub fn stats_heatmap(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     from_ts: Option<i64>,
     to_ts: Option<i64>,
     cwd_filter: Vec<String>,
@@ -257,6 +285,7 @@ pub fn stats_heatmap(
         provider,
         codex_dir,
         claude_dir,
+        opencode_dir,
         from_ts,
         to_ts,
         cwd_filter,
@@ -381,9 +410,10 @@ mod tests {
 
     #[test]
     fn aggregates_codex_and_claude_stats() -> AppResult<()> {
-        let root = temp_dir("cc-session-manager-stats-test");
+        let root = temp_dir("codesync-stats-test");
         let codex = root.join("codex");
         let claude = root.join("claude");
+        let opencode = root.join("opencode");
         create_codex_session(&codex)?;
         create_claude_session(&claude)?;
 
@@ -391,6 +421,7 @@ mod tests {
             Some("all".to_string()),
             codex.to_string_lossy().into_owned(),
             Some(claude.to_string_lossy().into_owned()),
+            Some(opencode.to_string_lossy().into_owned()),
             None,
             None,
             Vec::new(),
@@ -404,6 +435,7 @@ mod tests {
             Some("all".to_string()),
             codex.to_string_lossy().into_owned(),
             Some(claude.to_string_lossy().into_owned()),
+            Some(opencode.to_string_lossy().into_owned()),
             None,
             None,
             10,
@@ -421,6 +453,7 @@ mod tests {
             Some("all".to_string()),
             codex.to_string_lossy().into_owned(),
             Some(claude.to_string_lossy().into_owned()),
+            Some(opencode.to_string_lossy().into_owned()),
             None,
             None,
             Vec::new(),

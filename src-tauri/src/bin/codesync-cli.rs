@@ -4,12 +4,12 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use cc_session_manager_lib::error::AppError;
-use cc_session_manager_lib::models::{
+use codesync_lib::error::AppError;
+use codesync_lib::models::{
     BackupSummary, BundleListItem, ImportMode, ProjectGroup, SessionSummary, Settings,
     SwitchStrategy,
 };
-use cc_session_manager_lib::{
+use codesync_lib::{
     backup, bundle, family, fs_ops, paths, repair, rollout, sessions, settings, stats, webui,
 };
 use serde::Serialize;
@@ -61,6 +61,8 @@ struct CliContext {
     codex_dir_explicit: bool,
     claude_dir: String,
     claude_dir_explicit: bool,
+    opencode_dir: String,
+    opencode_dir_explicit: bool,
     family_lock: family::FamilyLock,
 }
 
@@ -111,6 +113,10 @@ fn run_cli() -> CliResult<()> {
     let claude_dir_explicit = claude_dir_arg.is_some();
     let claude_dir = claude_dir_arg
         .unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned());
+    let opencode_dir_arg = take_value(&mut args, "--opencode-dir")?;
+    let opencode_dir_explicit = opencode_dir_arg.is_some();
+    let opencode_dir = opencode_dir_arg
+        .unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
 
     if help {
         print_help();
@@ -124,6 +130,8 @@ fn run_cli() -> CliResult<()> {
         codex_dir_explicit,
         claude_dir,
         claude_dir_explicit,
+        opencode_dir,
+        opencode_dir_explicit,
         family_lock: family::FamilyLock::default(),
     };
 
@@ -132,6 +140,7 @@ fn run_cli() -> CliResult<()> {
             ctx.provider.clone(),
             ctx.codex_dir.clone(),
             ctx.claude_dir.clone(),
+            ctx.opencode_dir.clone(),
         )
         .map_err(CliError::message);
     };
@@ -143,6 +152,7 @@ fn run_cli() -> CliResult<()> {
                 ctx.provider.clone(),
                 ctx.codex_dir.clone(),
                 ctx.claude_dir.clone(),
+                ctx.opencode_dir.clone(),
             )
             .map_err(CliError::message)
         }
@@ -168,10 +178,10 @@ fn run_cli() -> CliResult<()> {
 
 fn print_help() {
     println!(
-        r#"cc-sessions - CC Sessions 命令行版本
+        r#"codesync-cli - CodeSync 命令行版本
 
 用法:
-  cc-sessions [全局选项] <命令> [命令选项]
+  codesync-cli [全局选项] <命令> [命令选项]
 
 不带命令会进入交互菜单，这是日常使用的推荐入口。
 
@@ -180,11 +190,12 @@ fn print_help() {
   --provider <codex|claude|all>
   --codex-dir <路径>         默认读取 ~/.codex
   --claude-dir <路径>        默认读取 ~/.claude
+  --opencode-dir <路径>      默认读取 ~/.local/share/opencode
   -h, --help                显示帮助
 
 常用命令:
   list [--archived] [--limit N] [--sort time|size] [--subagent]
-  search <关键词> [--sort time|size] [--subagent]
+  search <关键词> [--limit N] [--sort time|size] [--subagent]
   projects [--archived] [--subagent]
   preview <rollout路径> [--offset N] [--limit N|0] [--all] [--mode conversation|reasoning|all] [--summary|--raw]
   webui [--host 127.0.0.1] [--port 17888]
@@ -199,20 +210,22 @@ fn print_help() {
   menu
 
 示例:
-  cc-sessions
-  cc-sessions menu
+  codesync-cli
+  codesync-cli menu
   # 推荐先使用 menu；需要脚本化或 JSON 输出时再使用下面这些子命令
-  cc-sessions list --limit 20 --sort size
-  cc-sessions list --subagent --sort time
-  cc-sessions --provider claude search "hello"
-  cc-sessions --provider claude projects --subagent
-  cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
-  cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
-  cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
-  cc-sessions webui --host 127.0.0.1 --port 17888
-  cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
-  cc-sessions repair diagnose --json
-  cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
+  codesync-cli list --limit 20 --sort size
+  codesync-cli list --subagent --sort time
+  codesync-cli --provider claude search "hello"
+  codesync-cli --provider opencode list --limit 20
+  codesync-cli --provider claude projects --subagent
+  codesync-cli --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
+  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
+  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
+  codesync-cli webui --host 127.0.0.1 --port 17888
+  codesync-cli --provider claude webui --host 127.0.0.1 --port 17888
+  codesync-cli --provider opencode webui --host 127.0.0.1 --port 17888
+  codesync-cli repair diagnose --json
+  codesync-cli backup create --backup-dir ./backups --id <session-id> --name first-backup
 "#
     );
 }
@@ -238,11 +251,10 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     let include_archived = take_flag(&mut args, "--archived");
     let scope = take_session_scope(&mut args);
     let sort = parse_session_sort(take_value(&mut args, "--sort")?)?;
-    let query = take_value(&mut args, "--query")?.unwrap_or_else(|| args.join(" "));
-    if query.trim().is_empty() {
-        return Err(CliError::message("search 需要关键词"));
-    }
-    args.clear();
+    let limit = take_usize(&mut args, "--limit")?.unwrap_or(usize::MAX);
+    let query = take_value(&mut args, "--query")?.or_else(|| pop_command(&mut args));
+    ensure_no_args(&args)?;
+    let query = required(query, "search 需要关键词")?;
 
     let provider = session_provider(ctx)?;
     let mut hits = if provider == "all" {
@@ -250,12 +262,21 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             Some("codex".to_string()),
             ctx.codex_dir.clone(),
             Some(ctx.claude_dir.clone()),
+            Some(ctx.opencode_dir.clone()),
             query.clone(),
         )?;
         codex_hits.extend(sessions::search_sessions(
             Some("claude".to_string()),
             ctx.codex_dir.clone(),
             Some(ctx.claude_dir.clone()),
+            Some(ctx.opencode_dir.clone()),
+            query.clone(),
+        )?);
+        codex_hits.extend(sessions::search_sessions(
+            Some("opencode".to_string()),
+            ctx.codex_dir.clone(),
+            Some(ctx.claude_dir.clone()),
+            Some(ctx.opencode_dir.clone()),
             query,
         )?);
         codex_hits
@@ -264,6 +285,7 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             Some(provider),
             ctx.codex_dir.clone(),
             Some(ctx.claude_dir.clone()),
+            Some(ctx.opencode_dir.clone()),
             query,
         )?
     };
@@ -272,6 +294,7 @@ fn cmd_search(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     }
     retain_session_scope(&mut hits, scope);
     sort_sessions(&mut hits, sort);
+    hits.truncate(limit);
     output(ctx, &hits, print_sessions)
 }
 
@@ -316,15 +339,15 @@ fn cmd_webui(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
     webui::validate_host(&host)?;
     let default_provider = match ctx.provider.as_deref() {
         None => None,
-        Some("codex" | "claude") => ctx.provider.clone(),
+        Some("codex" | "claude" | "opencode") => ctx.provider.clone(),
         Some("all") => {
             return Err(CliError::message(
-                "webui 不支持 --provider all；请使用 codex 或 claude",
+                "webui 不支持 --provider all；请使用 codex、claude 或 opencode",
             ))
         }
         Some(other) => {
             return Err(CliError::message(format!(
-                "webui 不支持的 provider: {other}；请使用 codex 或 claude"
+                "webui 不支持的 provider: {other}；请使用 codex、claude 或 opencode"
             )))
         }
     };
@@ -336,6 +359,8 @@ fn cmd_webui(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
         codex_dir_explicit: ctx.codex_dir_explicit,
         claude_dir: ctx.claude_dir.clone(),
         claude_dir_explicit: ctx.claude_dir_explicit,
+        opencode_dir: ctx.opencode_dir.clone(),
+        opencode_dir_explicit: ctx.opencode_dir_explicit,
     })?;
     Ok(())
 }
@@ -346,7 +371,7 @@ fn collect_preview_events(
     offset: usize,
     limit: Option<usize>,
     mode: PreviewMode,
-) -> CliResult<Vec<cc_session_manager_lib::models::PreviewEvent>> {
+) -> CliResult<Vec<codesync_lib::models::PreviewEvent>> {
     let mut raw_offset = offset;
     let mut selected = Vec::new();
     let batch = 100usize;
@@ -407,7 +432,7 @@ fn parse_preview_format(args: &mut Vec<String>) -> CliResult<PreviewFormat> {
 }
 
 fn print_preview_events(
-    events: &[cc_session_manager_lib::models::PreviewEvent],
+    events: &[codesync_lib::models::PreviewEvent],
     format: PreviewFormat,
 ) {
     match format {
@@ -456,7 +481,7 @@ fn print_preview_events(
 }
 
 fn preview_event_visible(
-    event: &cc_session_manager_lib::models::PreviewEvent,
+    event: &codesync_lib::models::PreviewEvent,
     mode: PreviewMode,
 ) -> bool {
     match mode {
@@ -516,6 +541,7 @@ fn cmd_stats(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(provider),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 from_ts,
                 to_ts,
                 cwd_filter,
@@ -535,6 +561,7 @@ fn cmd_stats(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(provider),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 from_ts,
                 to_ts,
                 limit,
@@ -560,6 +587,7 @@ fn cmd_stats(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(provider),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 from_ts,
                 to_ts,
                 cwd_filter,
@@ -586,6 +614,7 @@ fn cmd_stats(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(provider),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 from_ts,
                 to_ts,
                 bucket,
@@ -605,6 +634,7 @@ fn cmd_stats(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(provider),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 from_ts,
                 to_ts,
                 cwd_filter,
@@ -1317,6 +1347,7 @@ fn cmd_settings(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             output(ctx, &defaults, |settings| {
                 println!("codex_dir\t{}", settings.codex_dir);
                 println!("claude_dir\t{}", settings.claude_dir);
+                println!("opencode_dir\t{}", settings.opencode_dir);
                 println!("backup_dir\t{}", settings.backup_dir);
                 println!("refresh_interval_ms\t{}", settings.refresh_interval_ms);
             })
@@ -1328,6 +1359,7 @@ fn cmd_settings(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             output(ctx, &settings, |settings| {
                 println!("codex_dir\t{}", settings.codex_dir);
                 println!("claude_dir\t{}", settings.claude_dir);
+                println!("opencode_dir\t{}", settings.opencode_dir);
                 println!("backup_dir\t{}", settings.backup_dir);
                 println!("refresh_interval_ms\t{}", settings.refresh_interval_ms);
             })
@@ -1336,9 +1368,11 @@ fn cmd_settings(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
             ensure_no_args(&args)?;
             let codex = settings::validate_codex_dir(ctx.codex_dir.clone())?;
             let claude = settings::validate_claude_dir(ctx.claude_dir.clone())?;
+            let opencode = settings::validate_opencode_dir(ctx.opencode_dir.clone())?;
             let report = HashMap::from([
                 ("codex", serde_json::to_value(codex)?),
                 ("claude", serde_json::to_value(claude)?),
+                ("opencode", serde_json::to_value(opencode)?),
             ]);
             output(ctx, &report, |report| {
                 for (name, value) in report {
@@ -1352,21 +1386,30 @@ fn cmd_settings(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
 
 fn load_sessions(ctx: &CliContext, provider: String) -> CliResult<Vec<SessionSummary>> {
     match provider.as_str() {
-        "codex" | "claude" => Ok(sessions::list_sessions(
+        "codex" | "claude" | "opencode" => Ok(sessions::list_sessions(
             Some(provider),
             ctx.codex_dir.clone(),
             Some(ctx.claude_dir.clone()),
+            Some(ctx.opencode_dir.clone()),
         )?),
         "all" => {
             let mut list = sessions::list_sessions(
                 Some("codex".to_string()),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
             )?;
             list.extend(sessions::list_sessions(
                 Some("claude".to_string()),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
+            )?);
+            list.extend(sessions::list_sessions(
+                Some("opencode".to_string()),
+                ctx.codex_dir.clone(),
+                Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
             )?);
             list.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
             Ok(list)
@@ -1424,7 +1467,7 @@ fn group_projects(list: Vec<SessionSummary>, include_archived: bool) -> Vec<Proj
 fn session_provider(ctx: &CliContext) -> CliResult<String> {
     let provider = ctx.provider.clone().unwrap_or_else(|| "codex".to_string());
     match provider.as_str() {
-        "codex" | "claude" | "all" => Ok(provider),
+        "codex" | "claude" | "opencode" | "all" => Ok(provider),
         other => Err(CliError::message(format!("不支持的 provider: {other}"))),
     }
 }
@@ -1433,7 +1476,7 @@ fn concrete_provider(ctx: &CliContext) -> CliResult<String> {
     let provider = session_provider(ctx)?;
     if provider == "all" {
         Err(CliError::message(
-            "此命令只支持 --provider codex 或 --provider claude",
+            "此命令只支持 --provider codex、--provider claude 或 --provider opencode",
         ))
     } else {
         Ok(provider)
@@ -1557,7 +1600,7 @@ fn print_backup_summary(summary: &BackupSummary) {
     println!("total_bytes\t{}", summary.total_bytes);
 }
 
-fn print_export_reports(reports: &Vec<cc_session_manager_lib::models::ExportReport>) {
+fn print_export_reports(reports: &Vec<codesync_lib::models::ExportReport>) {
     for report in reports {
         println!(
             "{}\tok={}\t{}",

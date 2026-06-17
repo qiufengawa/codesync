@@ -4,6 +4,9 @@ export function isSubagentSession(
   session: SessionSummary,
   overlay?: FamilyOverlay,
 ): boolean {
+  if (session.provider === "opencode" || session.source === "opencode") {
+    return false;
+  }
   return (
     overlay?.clone_state === "subagent" ||
     hasText(session.agent_nickname) ||

@@ -39,6 +39,7 @@ use crate::state_db;
 const BUNDLE_VERSION: u32 = 1;
 const PROVIDER_CODEX: &str = "codex";
 const PROVIDER_CLAUDE: &str = "claude";
+const PROVIDER_OPENCODE: &str = "opencode";
 const DEFAULT_SANDBOX_POLICY: &str = "read-only";
 const DEFAULT_APPROVAL_MODE: &str = "on-request";
 const DEFAULT_MEMORY_MODE: &str = "enabled";
@@ -176,6 +177,11 @@ pub fn export_session_bundles(
     machine_label: Option<String>,
     export_group: Option<String>,
 ) -> AppResult<Vec<ExportReport>> {
+    if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
+        return Err(AppError::Other(
+            "OpenCode Bundle 导出暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
+        ));
+    }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
             claude_dir
@@ -531,6 +537,11 @@ pub fn export_all_bundles(
     export_group: Option<String>,
     active_only: bool,
 ) -> AppResult<Vec<ExportReport>> {
+    if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
+        return Err(AppError::Other(
+            "OpenCode Bundle 导出暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
+        ));
+    }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
             claude_dir
@@ -582,6 +593,9 @@ pub fn export_all_bundles(
 pub fn list_bundles(src_dir: String, provider: Option<String>) -> AppResult<Vec<BundleListItem>> {
     let root = PathBuf::from(&src_dir);
     if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    if provider.as_deref() == Some(PROVIDER_OPENCODE) {
         return Ok(Vec::new());
     }
     let mut out: Vec<BundleListItem> = Vec::new();
@@ -648,6 +662,9 @@ pub fn import_session_bundles(
     strict: bool,
     project_mappings: Vec<ProjectPathMapping>,
 ) -> AppResult<Vec<ImportReport>> {
+    if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
+        return Err(AppError::Other("OpenCode Bundle 导入暂未开放".into()));
+    }
     let codex = PathBuf::from(&codex_dir);
     let claude = PathBuf::from(
         claude_dir.unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned()),
@@ -1334,7 +1351,7 @@ mod tests {
 
     #[test]
     fn exports_verifies_and_imports_claude_bundle() -> AppResult<()> {
-        let root = temp_dir("cc-session-manager-claude-bundle-test");
+        let root = temp_dir("codesync-claude-bundle-test");
         let source_claude = root.join("source-claude");
         let import_claude = root.join("import-claude");
         let bundle_dir = root.join("bundles");
@@ -1421,7 +1438,7 @@ mod tests {
 
     #[test]
     fn imports_codex_bundle_with_seconds_timestamp() -> AppResult<()> {
-        let root = temp_dir("cc-session-manager-codex-bundle-time-test");
+        let root = temp_dir("codesync-codex-bundle-time-test");
         let source_codex = root.join("source-codex");
         let import_codex = root.join("import-codex");
         let bundle_dir = root.join("bundles");
@@ -1503,7 +1520,7 @@ mod tests {
 
     #[test]
     fn packs_only_the_requested_bundle_source() -> AppResult<()> {
-        let root = temp_dir("cc-session-manager-bundle-zip-source-test");
+        let root = temp_dir("codesync-bundle-zip-source-test");
         let export_root = root.join("export");
         let bundle = export_root
             .join("test-machine")
@@ -1864,7 +1881,7 @@ pub fn unpack_zip(zip_path: String, dst_dir: String) -> AppResult<ZipReport> {
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn unpack_zip_to_temp(zip_path: String) -> AppResult<ZipReport> {
     let dir = std::env::temp_dir().join(format!(
-        "cc-session-manager-import-{}-{}",
+        "codesync-import-{}-{}",
         std::process::id(),
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     ));

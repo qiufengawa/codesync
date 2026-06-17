@@ -67,6 +67,11 @@ pub fn default_claude_dir() -> String {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+pub fn default_opencode_dir() -> String {
+    paths::default_opencode_dir().to_string_lossy().into_owned()
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn validate_codex_dir(path: String) -> AppResult<DirValidation> {
     let p = PathBuf::from(&path);
     let (exists, has_state, has_sessions) = paths::validate_codex_dir(&p);
@@ -96,6 +101,23 @@ pub fn validate_claude_dir(path: String) -> AppResult<DirValidation> {
         valid: exists && has_projects,
         has_state_db: false,
         has_sessions: has_projects,
+        threads_count,
+    })
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn validate_opencode_dir(path: String) -> AppResult<DirValidation> {
+    let p = PathBuf::from(&path);
+    let (exists, has_db) = paths::validate_opencode_dir(&p);
+    let threads_count = if has_db && crate::opencode_sessions::has_session_table(&p)? {
+        crate::opencode_sessions::count_sessions(&p)?
+    } else {
+        0
+    };
+    Ok(DirValidation {
+        valid: exists && has_db,
+        has_state_db: has_db,
+        has_sessions: has_db,
         threads_count,
     })
 }

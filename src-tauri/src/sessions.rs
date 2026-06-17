@@ -125,6 +125,7 @@ pub fn list_sessions(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
 ) -> AppResult<Vec<SessionSummary>> {
     match provider_or_codex(provider).as_str() {
         "codex" => {
@@ -138,6 +139,12 @@ pub fn list_sessions(
             );
             crate::claude_sessions::scan_sessions(&p)
         }
+        "opencode" => {
+            let p = PathBuf::from(opencode_dir.unwrap_or_else(|| {
+                paths::default_opencode_dir().to_string_lossy().into_owned()
+            }));
+            crate::opencode_sessions::scan_sessions(&p)
+        }
         other => Err(AppError::Other(format!("不支持的 provider: {other}"))),
     }
 }
@@ -147,8 +154,9 @@ pub fn group_sessions_by_project(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
 ) -> AppResult<Vec<ProjectGroup>> {
-    let list = list_sessions(provider, codex_dir, claude_dir)?;
+    let list = list_sessions(provider, codex_dir, claude_dir, opencode_dir)?;
     let mut groups: HashMap<String, ProjectGroup> = HashMap::new();
     for s in list {
         let key = s.cwd.clone();
@@ -176,13 +184,14 @@ pub fn search_sessions(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     query: String,
 ) -> AppResult<Vec<SessionSummary>> {
     let q = query.trim();
     if q.is_empty() {
-        return list_sessions(provider, codex_dir, claude_dir);
+        return list_sessions(provider, codex_dir, claude_dir, opencode_dir);
     }
-    let all = list_sessions(provider, codex_dir, claude_dir)?;
+    let all = list_sessions(provider, codex_dir, claude_dir, opencode_dir)?;
     let low = q.to_lowercase();
 
     // 前缀/过滤：id: cwd: model: archived:
@@ -239,6 +248,9 @@ pub fn search_sessions(
 }
 
 pub fn session_is_subagent(session: &SessionSummary) -> bool {
+    if session.provider == "opencode" || session.source.as_deref() == Some("opencode") {
+        return false;
+    }
     crate::repair::is_subagent_source(session.source.as_deref())
         || session
             .agent_nickname
@@ -275,6 +287,7 @@ pub fn delete_session(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     id: String,
 ) -> AppResult<DeleteResult> {
     match provider_or_codex(provider).as_str() {
@@ -287,6 +300,11 @@ pub fn delete_session(
                 .unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned());
             delete_one_claude(Path::new(&dir), &id)
         }
+        "opencode" => {
+            let dir = opencode_dir
+                .unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
+            crate::opencode_sessions::delete_one(Path::new(&dir), &id)
+        }
         other => Err(AppError::Other(format!("不支持的 provider: {other}"))),
     }
 }
@@ -296,6 +314,7 @@ pub fn delete_sessions(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     ids: Vec<String>,
 ) -> AppResult<Vec<DeleteResult>> {
     match provider_or_codex(provider).as_str() {
@@ -326,6 +345,27 @@ pub fn delete_sessions(
                 .iter()
                 .map(|id| {
                     delete_one_claude(&dir, id).unwrap_or_else(|e| DeleteResult {
+                        id: id.clone(),
+                        threads_rows_deleted: 0,
+                        logs_rows_deleted: 0,
+                        history_rows_deleted: 0,
+                        rollout_deleted: false,
+                        rollout_missing: false,
+                        ok: false,
+                        error: Some(e.to_string()),
+                    })
+                })
+                .collect())
+        }
+        "opencode" => {
+            let dir = PathBuf::from(
+                opencode_dir
+                    .unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned()),
+            );
+            Ok(ids
+                .iter()
+                .map(|id| {
+                    crate::opencode_sessions::delete_one(&dir, id).unwrap_or_else(|e| DeleteResult {
                         id: id.clone(),
                         threads_rows_deleted: 0,
                         logs_rows_deleted: 0,
@@ -565,7 +605,65 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock before unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("cc-sessions-{name}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("codesync-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn session_is_subagent_ignores_opencode_agent_role() {
+        let session = SessionSummary {
+            provider: "opencode".to_string(),
+            id: "ses_opencode".to_string(),
+            rollout_path: "opencode.db#ses_opencode".to_string(),
+            cwd: "/tmp/opencode".to_string(),
+            cwd_display: "opencode".to_string(),
+            title: "OpenCode".to_string(),
+            first_user_message: "hello".to_string(),
+            model: None,
+            reasoning_effort: None,
+            source: Some("opencode".to_string()),
+            agent_nickname: None,
+            agent_role: Some("build".to_string()),
+            tokens_used: 10,
+            created_at: 1,
+            updated_at: 2,
+            archived: false,
+            git_branch: None,
+            rollout_bytes: 10,
+            logs_count: 0,
+            has_backup: false,
+            resume_command: "opencode --session ses_opencode".to_string(),
+        };
+
+        assert!(!session_is_subagent(&session));
+    }
+
+    #[test]
+    fn session_is_subagent_keeps_claude_agent_role() {
+        let session = SessionSummary {
+            provider: "claude".to_string(),
+            id: "claude-sub".to_string(),
+            rollout_path: "/tmp/claude.jsonl".to_string(),
+            cwd: "/tmp/claude".to_string(),
+            cwd_display: "claude".to_string(),
+            title: "Claude".to_string(),
+            first_user_message: "hello".to_string(),
+            model: None,
+            reasoning_effort: None,
+            source: None,
+            agent_nickname: None,
+            agent_role: Some("general-purpose".to_string()),
+            tokens_used: 10,
+            created_at: 1,
+            updated_at: 2,
+            archived: false,
+            git_branch: None,
+            rollout_bytes: 10,
+            logs_count: 0,
+            has_backup: false,
+            resume_command: "claude --resume claude-sub".to_string(),
+        };
+
+        assert!(session_is_subagent(&session));
     }
 
     fn create_codex_threads_table(codex: &Path) -> AppResult<rusqlite::Connection> {
@@ -649,6 +747,7 @@ mod tests {
         let sessions = list_sessions(
             Some("codex".to_string()),
             codex.to_string_lossy().into_owned(),
+            None,
             None,
         )?;
         fs::remove_dir_all(&codex).ok();

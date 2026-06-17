@@ -5,7 +5,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SessionCard } from "@/components/SessionCard";
 import type { FamilyOverlay, SessionSummary } from "@/lib/api";
@@ -18,7 +17,7 @@ type Handlers = {
   onCopyResume: (s: SessionSummary) => void;
   onRevealCwd: (s: SessionSummary) => void;
   onArchiveToggle?: (s: SessionSummary) => void;
-  onBackup: (s: SessionSummary) => void;
+  onBackup?: (s: SessionSummary) => void;
   onDelete?: (s: SessionSummary) => void;
   onClone?: (s: SessionSummary) => void;
   onOpenFamily?: (s: SessionSummary) => void;
@@ -59,34 +58,42 @@ export function ProjectGroupView({
   const tokens = sessions.reduce((a, b) => a + b.tokens_used, 0);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 overflow-hidden rounded-lg border bg-card shadow-sm">
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="min-w-0 border-b border-border/30"
+    >
       <CollapsibleTrigger asChild>
         <div
           className={cn(
-            "flex min-w-0 cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/40",
-            open && "border-b bg-muted/30",
+            "flex min-w-0 cursor-pointer items-center gap-3 px-6 py-3 transition-colors",
+            open ? "bg-muted/20" : "hover:bg-muted/20",
           )}
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-            <FolderKanban className="h-4 w-4 text-muted-foreground" />
-          </div>
+          <ChevronDown
+            className={cn(
+              "h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform",
+              open && "rotate-180",
+            )}
+          />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <div className="min-w-0 truncate text-sm font-semibold">{cwdDisplay}</div>
-              <Badge variant="secondary" className="h-5 px-1.5 font-normal">
-                {sessions.length} 条
-              </Badge>
+              <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                {cwdDisplay}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] font-light tabular-nums text-muted-foreground/50">
+                {sessions.length}
+              </span>
               {tokens > 0 && (
-                <Badge variant="outline" className="h-5 px-1.5 font-normal text-muted-foreground">
-                  {humanTokens(tokens)} token
-                </Badge>
+                <span className="shrink-0 font-mono text-[11px] font-light tabular-nums text-muted-foreground/40">
+                  {humanTokens(tokens)}
+                </span>
               )}
             </div>
-            <div className="mt-0.5 min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-              {cwd}
-            </div>
           </div>
-          <div className="shrink-0 text-xs text-muted-foreground">{relativeTime(latest)}</div>
+          <span className="shrink-0 font-mono text-[11px] font-light tabular-nums text-muted-foreground/50">
+            {relativeTime(latest)}
+          </span>
           <Button
             variant="ghost"
             size="sm"
@@ -95,17 +102,14 @@ export function ProjectGroupView({
               if (allSelected) removeMany(ids);
               else addMany(ids);
             }}
-            className="h-8"
+            className="h-7 shrink-0 px-2 text-[11px] text-muted-foreground hover:text-foreground"
           >
             {allSelected ? "全不选" : someSelected ? "补全选" : "全选"}
           </Button>
-          <ChevronDown
-            className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
-          />
         </div>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="min-w-0 space-y-3 bg-muted/20 p-4">
+        <div className="min-w-0 border-t border-border/30">
           {sessions.map((s) => (
             <SessionCard
               key={s.id}

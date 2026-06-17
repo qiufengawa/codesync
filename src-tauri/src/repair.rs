@@ -3871,7 +3871,7 @@ mod tests {
 
     #[test]
     fn thread_rebuild_values_include_rollout_token_count() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-repair-token-test");
+        let codex = temp_codex_dir("codesync-repair-token-test");
         let rollout = write_token_rollout(&codex, "token-session")?;
 
         let values = thread_values_from_rollout(&codex, &rollout, false)?.expect("thread values");
@@ -3887,7 +3887,7 @@ mod tests {
 
     #[test]
     fn fork_session_at_event_copies_only_stable_prefix_and_archives_source() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-fork-test");
+        let codex = temp_codex_dir("codesync-fork-test");
         let source_id = "source-session";
         let rollout = write_conversation_rollout(&codex, source_id)?;
         create_full_state(&codex)?;
@@ -3964,7 +3964,7 @@ mod tests {
 
     #[test]
     fn fork_session_at_event_rejects_unstable_or_damaged_prefix() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-fork-reject-test");
+        let codex = temp_codex_dir("codesync-fork-reject-test");
         let source_id = "source-session";
         let rollout = write_conversation_rollout(&codex, source_id)?;
         create_full_state(&codex)?;
@@ -3998,7 +3998,7 @@ mod tests {
 
     #[test]
     fn mismatched_scan_includes_unregistered_rollouts_when_family_store_exists() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-repair-test");
+        let codex = temp_codex_dir("codesync-repair-test");
         fs::create_dir_all(&codex)?;
 
         let mut families = BTreeMap::new();
@@ -4060,7 +4060,7 @@ mod tests {
 
     #[test]
     fn mismatched_scan_includes_hidden_source_rows_for_resync() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-hidden-source-test");
+        let codex = temp_codex_dir("codesync-hidden-source-test");
         write_rollout(&codex, "hidden-source-session", DEFAULT_PROVIDER)?;
         let conn = create_minimal_state(&codex)?;
         conn.execute(
@@ -4068,7 +4068,7 @@ mod tests {
             (
                 "hidden-source-session",
                 DEFAULT_PROVIDER,
-                "cc-session-manager",
+                "opencode-sessions",
             ),
         )?;
 
@@ -4081,7 +4081,7 @@ mod tests {
 
     #[test]
     fn diagnostics_do_not_treat_archived_rollouts_as_orphan_threads() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-archived-test");
+        let codex = temp_codex_dir("codesync-archived-test");
         write_rollout_in(
             &codex,
             "archived_sessions",
@@ -4109,8 +4109,8 @@ mod tests {
 
     #[test]
     fn project_config_diagnosis_repairs_missing_multi_agent_default() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-project-config-test");
-        let project = temp_codex_dir("cc-session-manager-project-config-worktree");
+        let codex = temp_codex_dir("codesync-project-config-test");
+        let project = temp_codex_dir("codesync-project-config-worktree");
         fs::create_dir_all(project.join(".codex"))?;
         fs::write(
             project.join(".codex").join("config.toml"),
@@ -4151,8 +4151,8 @@ mod tests {
 
     #[test]
     fn project_config_diagnosis_refuses_to_guess_invalid_timeout_bounds() -> AppResult<()> {
-        let codex = temp_codex_dir("cc-session-manager-project-config-bounds-test");
-        let project = temp_codex_dir("cc-session-manager-project-config-bounds-worktree");
+        let codex = temp_codex_dir("codesync-project-config-bounds-test");
+        let project = temp_codex_dir("codesync-project-config-bounds-worktree");
         fs::create_dir_all(project.join(".codex"))?;
         fs::write(
             project.join(".codex").join("config.toml"),
@@ -4178,7 +4178,7 @@ mod tests {
 
     #[test]
     fn claude_history_orphans_are_reported_and_pruned() -> AppResult<()> {
-        let claude = temp_codex_dir("cc-session-manager-claude-history-test");
+        let claude = temp_codex_dir("codesync-claude-history-test");
         write_claude_session(&claude, "live-session")?;
         fs::write(
             claude.join("history.jsonl"),
@@ -4266,7 +4266,7 @@ mod tests {
 
     #[test]
     fn gui_visibility_diagnose_and_repair() -> AppResult<()> {
-        let claude = temp_codex_dir("cc-session-manager-claude-gui-test");
+        let claude = temp_codex_dir("codesync-claude-gui-test");
 
         // 可见会话：首行即普通用户消息
         write_claude_session(&claude, GUI_TEST_ID_VISIBLE)?;

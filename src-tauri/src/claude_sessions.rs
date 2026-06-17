@@ -975,7 +975,7 @@ mod tests {
 
     #[test]
     fn scans_claude_jsonl_and_builds_preview() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-scan-test");
+        let claude = temp_dir("codesync-claude-scan-test");
         let file = write_sample_session(&claude)?;
 
         let sessions = scan_sessions(&claude)?;
@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn scans_claude_agent_jsonl_as_subagent_session() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-subagent-scan-test");
+        let claude = temp_dir("codesync-claude-subagent-scan-test");
         let file = write_agent_session(&claude)?;
 
         let sessions = scan_sessions(&claude)?;
@@ -1024,7 +1024,7 @@ mod tests {
 
     #[test]
     fn preserves_ai_title_when_later_title_event_is_empty() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-ai-title-test");
+        let claude = temp_dir("codesync-claude-ai-title-test");
         write_session_values(
             &claude,
             "claude-title.jsonl",
@@ -1060,7 +1060,7 @@ mod tests {
 
     #[test]
     fn custom_title_overrides_ai_title() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-custom-title-test");
+        let claude = temp_dir("codesync-claude-custom-title-test");
         write_session_values(
             &claude,
             "claude-custom.jsonl",
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn reads_hook_session_title_from_stdout() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-hook-title-test");
+        let claude = temp_dir("codesync-claude-hook-title-test");
         let stdout = serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_first_user_message_without_explicit_title() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-first-user-title-test");
+        let claude = temp_dir("codesync-claude-first-user-title-test");
         write_session_values(
             &claude,
             "claude-first-user.jsonl",
@@ -1162,7 +1162,7 @@ mod tests {
 
     #[test]
     fn paginates_preview_by_events_not_raw_lines() -> AppResult<()> {
-        let claude = temp_dir("cc-session-manager-claude-pagination-test");
+        let claude = temp_dir("codesync-claude-pagination-test");
         let session_dir = claude.join("projects").join("sample-project");
         fs::create_dir_all(&session_dir)?;
         let file = session_dir.join("claude-page.jsonl");

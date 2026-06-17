@@ -1,9 +1,9 @@
 declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
-    __CC_SESSIONS_WEBUI__?: {
+    __CODESYNC_WEBUI__?: {
       apiToken?: string;
-      defaultProvider?: "codex" | "claude";
+      defaultProvider?: "codex" | "claude" | "opencode";
     };
   }
 }
@@ -17,9 +17,10 @@ export function isWebRuntime() {
 }
 
 export function webuiApiToken() {
-  return window.__CC_SESSIONS_WEBUI__?.apiToken;
+  return window.__CODESYNC_WEBUI__?.apiToken;
 }
 
-export function webuiDefaultProvider(): "codex" | "claude" {
-  return window.__CC_SESSIONS_WEBUI__?.defaultProvider === "claude" ? "claude" : "codex";
+export function webuiDefaultProvider(): "codex" | "claude" | "opencode" {
+  const provider = window.__CODESYNC_WEBUI__?.defaultProvider;
+  return provider === "codex" || provider === "claude" ? provider : "opencode";
 }

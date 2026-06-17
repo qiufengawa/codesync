@@ -33,15 +33,18 @@ function resumeCommandText(provider: SessionProvider, sessionId: string) {
       return `codex resume ${sessionId}`;
     case "claude":
       return `claude --resume ${sessionId}`;
+    case "opencode":
+      return `opencode --session ${sessionId}`;
   }
 }
 
-export type SessionProvider = "codex" | "claude";
+export type SessionProvider = "codex" | "claude" | "opencode";
 export type StatsProvider = "all" | SessionProvider;
 
 export type Settings = {
   codex_dir: string;
   claude_dir: string;
+  opencode_dir: string;
   backup_dir: string;
   open_command: string;
   refresh_interval_ms: number;
@@ -537,22 +540,24 @@ export const api = {
   saveSettings: (settings: Settings) => invokeCommand<void>("save_settings", { settings }),
   openLatestReleasePage: async () => {
     if (isWebRuntime()) {
-      window.open("https://github.com/ccpopy/cc-sessions/releases/latest", "_blank", "noopener,noreferrer");
+      window.open("https://github.com/qiufengawa/codesync/releases/latest", "_blank", "noopener,noreferrer");
       return;
     }
     return invokeCommand<void>("open_latest_release_page");
   },
   defaultCodexDir: () => invokeCommand<string>("default_codex_dir"),
   defaultClaudeDir: () => invokeCommand<string>("default_claude_dir"),
+  defaultOpencodeDir: () => invokeCommand<string>("default_opencode_dir"),
   validateCodexDir: (path: string) => invokeCommand<DirValidation>("validate_codex_dir", { path }),
   validateClaudeDir: (path: string) => invokeCommand<DirValidation>("validate_claude_dir", { path }),
+  validateOpencodeDir: (path: string) => invokeCommand<DirValidation>("validate_opencode_dir", { path }),
 
-  listSessions: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
-    invokeCommand<SessionSummary[]>("list_sessions", { provider, codexDir, claudeDir }),
-  groupByProject: (provider: SessionProvider, codexDir: string, claudeDir?: string) =>
-    invokeCommand<ProjectGroup[]>("group_sessions_by_project", { provider, codexDir, claudeDir }),
-  searchSessions: (provider: SessionProvider, codexDir: string, claudeDir: string | undefined, query: string) =>
-    invokeCommand<SessionSummary[]>("search_sessions", { provider, codexDir, claudeDir, query }),
+  listSessions: (provider: SessionProvider, codexDir: string, claudeDir?: string, opencodeDir?: string) =>
+    invokeCommand<SessionSummary[]>("list_sessions", { provider, codexDir, claudeDir, opencodeDir }),
+  groupByProject: (provider: SessionProvider, codexDir: string, claudeDir?: string, opencodeDir?: string) =>
+    invokeCommand<ProjectGroup[]>("group_sessions_by_project", { provider, codexDir, claudeDir, opencodeDir }),
+  searchSessions: (provider: SessionProvider, codexDir: string, claudeDir: string | undefined, opencodeDir: string | undefined, query: string) =>
+    invokeCommand<SessionSummary[]>("search_sessions", { provider, codexDir, claudeDir, opencodeDir, query }),
   setArchived: (provider: SessionProvider, codexDir: string, id: string, v: boolean) =>
     invokeCommand<void>("set_archived", { provider, codexDir, id, v }),
   deleteSession: (
@@ -560,13 +565,15 @@ export const api = {
     codexDir: string,
     id: string,
     claudeDir?: string,
-  ) => invokeCommand<DeleteResult>("delete_session", { provider, codexDir, claudeDir, id }),
+    opencodeDir?: string,
+  ) => invokeCommand<DeleteResult>("delete_session", { provider, codexDir, claudeDir, opencodeDir, id }),
   deleteSessions: (
     provider: SessionProvider,
     codexDir: string,
     ids: string[],
     claudeDir?: string,
-  ) => invokeCommand<DeleteResult[]>("delete_sessions", { provider, codexDir, claudeDir, ids }),
+    opencodeDir?: string,
+  ) => invokeCommand<DeleteResult[]>("delete_sessions", { provider, codexDir, claudeDir, opencodeDir, ids }),
 
   previewHead: (provider: SessionProvider, rolloutPath: string, limit: number) =>
     invokeCommand<PreviewEvent[]>("preview_session_head", { provider, rolloutPath, limit }),
@@ -579,6 +586,7 @@ export const api = {
     provider: SessionProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     backup_dir: string;
     ids: string[];
     name?: string;
@@ -588,6 +596,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       backupDir: p.backup_dir,
       ids: p.ids,
       name: p.name,
@@ -601,6 +610,7 @@ export const api = {
     backup_path: string;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     id: string;
     overwrite: boolean;
   }) =>
@@ -609,6 +619,7 @@ export const api = {
       backupPath: p.backup_path,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       id: p.id,
       overwrite: p.overwrite,
     }),
@@ -617,6 +628,7 @@ export const api = {
     backup_path: string;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     overwrite: boolean;
   }) =>
     invokeCommand<RestoreResult[]>("restore_all", {
@@ -624,6 +636,7 @@ export const api = {
       backupPath: p.backup_path,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       overwrite: p.overwrite,
     }),
   deleteBackup: (backupPath: string) => invokeCommand<void>("delete_backup", { backupPath }),
@@ -633,6 +646,7 @@ export const api = {
     provider: StatsProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     from_ts: number | null;
     to_ts: number | null;
     cwd_filter: string[];
@@ -642,6 +656,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       fromTs: p.from_ts,
       toTs: p.to_ts,
       cwdFilter: p.cwd_filter,
@@ -651,6 +666,7 @@ export const api = {
     provider: StatsProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     from_ts: number | null;
     to_ts: number | null;
     bucket: "day" | "week";
@@ -661,6 +677,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       fromTs: p.from_ts,
       toTs: p.to_ts,
       bucket: p.bucket,
@@ -671,6 +688,7 @@ export const api = {
     provider: StatsProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     from_ts: number | null;
     to_ts: number | null;
     limit: number;
@@ -681,6 +699,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       fromTs: p.from_ts,
       toTs: p.to_ts,
       limit: p.limit,
@@ -837,6 +856,7 @@ export const api = {
     provider: SessionProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     out_dir: string;
     ids: string[];
     machine_label?: string;
@@ -846,6 +866,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       outDir: p.out_dir,
       ids: p.ids,
       machineLabel: p.machine_label,
@@ -855,6 +876,7 @@ export const api = {
     provider: SessionProvider;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     out_dir: string;
     machine_label?: string;
     export_group?: string;
@@ -864,6 +886,7 @@ export const api = {
       provider: p.provider,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       outDir: p.out_dir,
       machineLabel: p.machine_label,
       exportGroup: p.export_group,
@@ -878,6 +901,7 @@ export const api = {
     src_dir: string;
     codex_dir: string;
     claude_dir?: string;
+    opencode_dir?: string;
     mode: ImportMode;
     make_visible: boolean;
     strict: boolean;
@@ -888,6 +912,7 @@ export const api = {
       srcDir: p.src_dir,
       codexDir: p.codex_dir,
       claudeDir: p.claude_dir,
+      opencodeDir: p.opencode_dir,
       mode: p.mode,
       makeVisible: p.make_visible,
       strict: p.strict,

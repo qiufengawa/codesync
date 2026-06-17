@@ -270,6 +270,7 @@ fn preview_range_by_provider(
     match provider.as_deref().unwrap_or("codex") {
         "codex" => preview_range_impl(path, offset, limit),
         "claude" => crate::claude_sessions::preview_range(path, offset, limit),
+        "opencode" => crate::opencode_sessions::preview_range(path, offset, limit),
         other => Err(crate::error::AppError::Other(format!(
             "不支持的 provider: {other}"
         ))),
@@ -366,6 +367,9 @@ pub fn preview_session_meta(
     if provider.as_deref().unwrap_or("codex") == "claude" {
         return crate::claude_sessions::preview_meta(&rollout_path);
     }
+    if provider.as_deref().unwrap_or("codex") == "opencode" {
+        return crate::opencode_sessions::preview_meta(&rollout_path);
+    }
     let f = File::open(PathBuf::from(&rollout_path))?;
     let mut reader = BufReader::new(f);
     let mut first = String::new();
@@ -421,7 +425,7 @@ mod tests {
 
     #[test]
     fn reads_latest_nested_token_count() -> AppResult<()> {
-        let file = temp_file("cc-session-manager-rollout-token-test");
+        let file = temp_file("codesync-rollout-token-test");
         {
             let mut out = File::create(&file)?;
             for value in [

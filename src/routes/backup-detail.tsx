@@ -223,6 +223,7 @@ export default function BackupDetailRoute({ provider = "codex" }: { provider?: S
             backup_path: backupPath,
             codex_dir: settings.codex_dir,
             claude_dir: settings.claude_dir,
+            opencode_dir: settings.opencode_dir,
             id: restoreTarget.id,
             overwrite: overwrite === "overwrite",
           });
@@ -283,7 +284,7 @@ function toSessionSummary(m: ManifestSession, backupPath: string, provider: Sess
     rollout_bytes: m.bytes_rollout,
     logs_count: m.logs_count,
     has_backup: true,
-    resume_command: provider === "claude" ? `claude --resume ${m.id}` : `codex resume ${m.id}`,
+    resume_command: provider === "claude" ? `claude --resume ${m.id}` : provider === "opencode" ? `opencode --session ${m.id}` : `codex resume ${m.id}`,
   };
 }
 

@@ -24,6 +24,19 @@ export default function BackupsRoute({ provider = "codex" }: { provider?: Sessio
   const totalSize = useMemo(() => backups.reduce((a, b) => a + b.total_bytes, 0), [backups]);
   const providerLabel = provider === "codex" ? "Codex" : "Claude";
 
+  if (provider === "opencode") {
+    return (
+      <>
+        <TopBar title="OpenCode 备份" />
+        <EmptyState
+          icon={<Archive className="h-10 w-10" />}
+          title="OpenCode 备份暂未开放"
+          description="当前 OpenCode 支持浏览、搜索、预览、统计和删除；备份/还原先保持禁用以避免误写数据库。"
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <TopBar
@@ -146,6 +159,7 @@ export default function BackupsRoute({ provider = "codex" }: { provider?: Sessio
             backup_path: restoreTarget.path,
             codex_dir: settings.codex_dir,
             claude_dir: settings.claude_dir,
+            opencode_dir: settings.opencode_dir,
             overwrite: false,
           });
           const ok = r.filter((x) => x.ok).length;

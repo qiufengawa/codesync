@@ -1,257 +1,208 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
-  Archive,
   BarChart3,
+  Archive,
   MessageSquare,
+  Moon,
   Package,
-  Settings,
+  Settings as SettingsIcon,
+  Sun,
   Terminal,
   Wrench,
 } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import {
-  Sidebar as SidebarPrimitive,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SettingsSheet } from "@/components/SettingsSheet";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { useSettings } from "@/stores/settings";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { useActiveProvider } from "@/stores/provider";
+import { useTheme } from "@/stores/theme";
+import type { SessionProvider } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Accent = "codex" | "claude" | "global";
+type FuncKey = "sessions" | "repair" | "backups" | "transfer";
 
-type NavItem = {
-  to: string;
-  icon: React.ComponentType<{ className?: string }>;
+const FUNC_ITEMS: { key: FuncKey; icon: typeof MessageSquare; label: string }[] = [
+  { key: "sessions", icon: MessageSquare, label: "会话" },
+  { key: "repair", icon: Wrench, label: "修复" },
+  { key: "backups", icon: Archive, label: "备份" },
+  { key: "transfer", icon: Package, label: "迁移" },
+];
+
+const PROVIDERS: {
+  key: SessionProvider;
   label: string;
-};
-
-const codexItems: NavItem[] = [
-  { to: "/codex/sessions", icon: MessageSquare, label: "会话" },
-  { to: "/codex/repair", icon: Wrench, label: "修复" },
-  { to: "/codex/backups", icon: Archive, label: "备份" },
-  { to: "/codex/transfer", icon: Package, label: "导出 / 导入" },
+  activeBg: string;
+  activeText: string;
+}[] = [
+  { key: "opencode", label: "OpenCode", activeBg: "bg-sky-500/10", activeText: "text-sky-600 dark:text-sky-400" },
+  { key: "codex", label: "Codex", activeBg: "bg-emerald-500/10", activeText: "text-emerald-600 dark:text-emerald-400" },
+  { key: "claude", label: "Claude", activeBg: "bg-orange-500/10", activeText: "text-orange-600 dark:text-orange-400" },
 ];
-
-const claudeItems: NavItem[] = [
-  { to: "/claude/sessions", icon: MessageSquare, label: "会话" },
-  { to: "/claude/repair", icon: Wrench, label: "修复" },
-  { to: "/claude/backups", icon: Archive, label: "备份" },
-  { to: "/claude/transfer", icon: Package, label: "导出 / 导入" },
-];
-
-const globalItems: NavItem[] = [
-  { to: "/stats", icon: BarChart3, label: "统计" },
-];
-
-const accentDot: Record<Accent, string> = {
-  codex: "bg-emerald-500",
-  claude: "bg-orange-500",
-  global: "bg-foreground/60",
-};
-
-const accentBar: Record<Accent, string> = {
-  codex: "bg-emerald-500/90",
-  claude: "bg-orange-500/90",
-  global: "bg-foreground/70",
-};
-
-const accentActiveBar: Record<Accent, string> = {
-  codex: "bg-emerald-500 shadow-[0_0_10px_-1px_hsl(142_76%_45%/0.55)]",
-  claude: "bg-orange-500 shadow-[0_0_10px_-1px_hsl(24_95%_55%/0.55)]",
-  global: "bg-foreground/80",
-};
-
-const accentActiveIcon: Record<Accent, string> = {
-  codex: "text-emerald-600 dark:text-emerald-400",
-  claude: "text-orange-600 dark:text-orange-400",
-  global: "text-foreground",
-};
-
-const accentActiveTint: Record<Accent, string> = {
-  codex:
-    "bg-emerald-500/10 ring-1 ring-inset ring-emerald-500/20 dark:bg-emerald-500/12",
-  claude:
-    "bg-orange-500/10 ring-1 ring-inset ring-orange-500/20 dark:bg-orange-500/12",
-  global: "bg-sidebar-accent ring-1 ring-inset ring-border/60",
-};
 
 export function Sidebar() {
-  const settings = useSettings((s) => s.settings);
-  const location = useLocation();
+  const navigate = useNavigate();
+  const loc = useLocation();
+  const activeProvider = useActiveProvider((s) => s.activeProvider);
+  const setActiveProvider = useActiveProvider((s) => s.setActiveProvider);
+
+  // Sync store from URL on mount and navigation
+  const pathProvider = loc.pathname.split("/")[1];
+  if (
+    (pathProvider === "codex" || pathProvider === "claude" || pathProvider === "opencode") &&
+    pathProvider !== activeProvider
+  ) {
+    setActiveProvider(pathProvider);
+  }
+
+  const currentFunc = loc.pathname.split("/")[2] || "sessions";
+  const isStats = loc.pathname === "/stats";
+
+  const goTo = (provider: SessionProvider, func: FuncKey) => {
+    setActiveProvider(provider);
+    navigate(`/${provider}/${func}`);
+  };
+
+  const activeMeta = PROVIDERS.find((p) => p.key === activeProvider) ?? PROVIDERS[0];
 
   return (
-    <SidebarPrimitive
-      collapsible="none"
-      className="hidden w-56 shrink-0 border-r border-border/60 md:flex"
-      style={{ "--sidebar-width": "14rem" } as React.CSSProperties}
-    >
-      <SidebarHeader className="relative flex h-14 flex-row items-center gap-2.5 border-b border-border/60 px-3.5 py-0 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-gradient-to-r after:from-transparent after:via-border/40 after:to-transparent">
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-foreground to-foreground/80 text-background shadow-[0_1px_2px_-1px_hsl(var(--foreground)/0.4),inset_0_1px_0_0_hsl(var(--background)/0.18)]">
-          <span
-            aria-hidden="true"
-            className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,hsl(var(--background)/0.18),transparent_55%)]"
-          />
-          <Terminal className="relative h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold leading-tight tracking-tight text-foreground">
-            CC Sessions
-          </div>
-          <div className="mt-0.5 truncate text-[9.5px] font-semibold uppercase leading-tight tracking-[0.14em] text-muted-foreground/75">
-            Codex · Claude
-          </div>
-        </div>
-      </SidebarHeader>
-
-      <SidebarContent className="gap-0 py-1">
-        <NavGroup label="Codex" accent="codex" items={codexItems} pathname={location.pathname} />
-        <NavGroup label="Claude" accent="claude" items={claudeItems} pathname={location.pathname} />
-        <NavGroup label="全局" accent="global" items={globalItems} pathname={location.pathname} />
-      </SidebarContent>
-
-      <SidebarFooter className="gap-1.5 border-t border-border/60 p-2.5">
-        {settings?.codex_dir && (
-          <DirCard label="Codex 目录" path={settings.codex_dir} accent="codex" />
-        )}
-        {settings?.claude_dir && (
-          <DirCard label="Claude 目录" path={settings.claude_dir} accent="claude" />
-        )}
-        <div className="mt-0.5 flex items-center gap-1">
-          <ThemeToggle className="flex-1" />
-          <SettingsSheet
-            trigger={
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="设置"
-                className="group/settings h-9 w-9 shrink-0 rounded-lg border border-border/70 bg-muted/40 text-muted-foreground shadow-[inset_0_1px_0_0_hsl(var(--background)/0.6)] hover:border-border hover:bg-muted/60 hover:text-foreground dark:bg-muted/30 dark:shadow-[inset_0_1px_0_0_hsl(var(--background)/0.2)]"
-              >
-                <Settings className="h-4 w-4 transition-transform duration-500 ease-out group-hover/settings:rotate-90" />
-              </Button>
-            }
-          />
-        </div>
-      </SidebarFooter>
-    </SidebarPrimitive>
-  );
-}
-
-function NavGroup({
-  label,
-  items,
-  pathname,
-  accent,
-}: {
-  label: string;
-  items: NavItem[];
-  pathname: string;
-  accent: Accent;
-}) {
-  return (
-    <SidebarGroup className="px-2 pb-1 pt-2.5">
-      <div className="mb-1.5 flex items-center gap-2 px-2">
-        <span aria-hidden="true" className={cn("h-1 w-1 shrink-0 rounded-full", accentDot[accent])} />
-        <div className="text-[10px] font-semibold uppercase leading-none tracking-[0.14em] text-muted-foreground/75">
-          {label}
-        </div>
-        <div
-          aria-hidden="true"
-          className="ml-1 h-px flex-1 bg-gradient-to-r from-border/60 via-border/30 to-transparent"
-        />
+    <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-0.5 border-r border-border/40 bg-sidebar py-4">
+      {/* Logo */}
+      <div className="mb-3 flex h-7 w-7 items-center justify-center bg-primary text-primary-foreground">
+        <Terminal className="h-3.5 w-3.5" />
       </div>
-      <SidebarMenu className="gap-0.5">
-        {items.map((it) => {
-          const isActive = it.to === "/stats" ? pathname === it.to : pathname.startsWith(it.to);
-          const Icon = it.icon;
+
+      {/* Provider logos */}
+      <div className="mb-1 flex flex-col items-center gap-1">
+        {PROVIDERS.map((p) => {
+          const isActive = activeProvider === p.key;
           return (
-            <SidebarMenuItem key={it.to}>
-              <SidebarMenuButton
-                asChild
-                isActive={isActive}
-                className={cn(
-                  "relative h-auto overflow-visible px-2.5 py-2 text-[13px] font-medium",
-                  "data-[active=true]:bg-transparent data-[active=true]:hover:bg-transparent",
-                )}
-              >
-                <NavLink to={it.to} end={false}>
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute inset-0 rounded-md transition-opacity duration-200",
-                      accentActiveTint[accent],
-                      isActive ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute -left-[9px] top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full transition-all duration-200",
-                      isActive
-                        ? cn(accentActiveBar[accent], "scale-y-100 opacity-100")
-                        : cn(accentBar[accent], "scale-y-50 opacity-0"),
-                    )}
-                  />
-                  <Icon
-                    className={cn(
-                      "relative h-4 w-4 shrink-0 transition-colors",
-                      isActive ? accentActiveIcon[accent] : "text-muted-foreground/80",
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "relative truncate transition-colors",
-                      isActive ? "font-semibold text-foreground" : "text-foreground/85",
-                    )}
-                  >
-                    {it.label}
-                  </span>
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            <Tooltip key={p.key}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => goTo(p.key, currentFunc as FuncKey)}
+                  className={cn(
+                    "flex h-7 w-7 items-center justify-center transition-all",
+                    isActive ? p.activeBg : "opacity-50 hover:opacity-100 hover:bg-muted/60",
+                  )}
+                  aria-label={p.label}
+                >
+                  <ProviderIcon provider={p.key} className={cn("h-4 w-4 transition-transform", isActive && "scale-110")} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{p.label}</TooltipContent>
+            </Tooltip>
           );
         })}
-      </SidebarMenu>
-    </SidebarGroup>
+      </div>
+
+      <div className="my-1 h-px w-5 bg-border/30" />
+
+      {/* Function icons — colored by active provider */}
+      <div className="flex flex-col items-center gap-1">
+        {FUNC_ITEMS.map((item) => {
+          const isActive = !isStats && currentFunc === item.key;
+          const Icon = item.icon;
+          return (
+            <Tooltip key={item.key}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => goTo(activeProvider, item.key)}
+                  className={cn(
+                    "relative flex h-7 w-7 items-center justify-center  transition-all",
+                    isActive
+                      ? cn(activeMeta.activeBg, activeMeta.activeText)
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                  aria-label={item.label}
+                >
+                  {isActive && (
+                    <span className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+                  )}
+                  <Icon className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {activeMeta.label} · {item.label}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+
+      <div className="my-1 h-px w-5 bg-border/30" />
+
+      {/* Stats — global */}
+      <div className="flex flex-col items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => navigate("/stats")}
+              className={cn(
+                "flex h-7 w-7 items-center justify-center  transition-all",
+                isStats
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+              aria-label="统计"
+            >
+              {isStats && (
+                <span className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+              )}
+              <BarChart3 className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">统计</TooltipContent>
+        </Tooltip>
+      </div>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Bottom: theme + settings */}
+      <div className="flex flex-col items-center gap-1">
+        <ThemeIconToggle />
+        <SettingsSheet
+          trigger={
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="设置"
+              className="h-7 w-7  text-muted-foreground hover:text-foreground"
+            >
+              <SettingsIcon className="h-4 w-4" />
+            </Button>
+          }
+        />
+      </div>
+    </aside>
   );
 }
 
-function DirCard({
-  label,
-  path,
-  accent,
-}: {
-  label: string;
-  path: string;
-  accent: Accent;
-}) {
+function ThemeIconToggle() {
+  const mode = useTheme((s) => s.mode);
+  const setMode = useTheme((s) => s.setMode);
+  const next = mode === "dark" ? "light" : "dark";
+  const Icon = mode === "dark" ? Sun : Moon;
+
   return (
-    <div
-      className="group/dir relative overflow-hidden rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 transition-colors hover:bg-muted/50"
-      title={path}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full opacity-70",
-          accentBar[accent],
-        )}
-      />
-      <div className="flex items-center gap-1.5">
-        <span aria-hidden="true" className={cn("h-1 w-1 shrink-0 rounded-full", accentDot[accent])} />
-        <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
-          {label}
-        </div>
-      </div>
-      <div className="mt-0.5 truncate font-mono text-[10.5px] leading-snug text-foreground/70">
-        {path}
-      </div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={() => setMode(next)}
+          className="flex h-7 w-7 items-center justify-center  text-muted-foreground transition-all hover:bg-muted/60 hover:text-foreground"
+          aria-label="切换主题"
+        >
+          <Icon className="h-4 w-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {mode === "dark" ? "切换浅色" : "切换深色"}
+      </TooltipContent>
+    </Tooltip>
   );
 }

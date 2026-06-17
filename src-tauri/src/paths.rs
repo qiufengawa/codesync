@@ -89,6 +89,38 @@ pub fn default_claude_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".claude"))
 }
 
+pub fn default_opencode_dir() -> PathBuf {
+    // 1. OPENCODE_DB 环境变量指向 db 文件，用其父目录
+    if let Ok(raw) = std::env::var("OPENCODE_DB") {
+        let path = PathBuf::from(raw);
+        if let Some(parent) = path.parent() {
+            return parent.to_path_buf();
+        }
+    }
+
+    // 2. XDG_DATA_HOME 显式覆盖（OpenCode Go XDG 库在所有平台都读取）
+    if let Ok(raw) = std::env::var("XDG_DATA_HOME") {
+        if !raw.is_empty() {
+            return PathBuf::from(raw).join("opencode");
+        }
+    }
+
+    // 3. Windows: %LOCALAPPDATA%\opencode
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            if !local.is_empty() {
+                return PathBuf::from(local).join("opencode");
+            }
+        }
+    }
+
+    // 4. macOS / Linux 默认 XDG 路径
+    dirs::home_dir()
+        .map(|h| h.join(".local").join("share").join("opencode"))
+        .unwrap_or_else(|| PathBuf::from(".local/share/opencode"))
+}
+
 pub fn default_backup_dir() -> PathBuf {
     let cc_root = default_codex_dir();
     cc_root
@@ -108,6 +140,21 @@ pub fn validate_claude_dir(path: &Path) -> (bool, bool) {
     let exists = path.is_dir();
     let has_projects = path.join("projects").is_dir();
     (exists, has_projects)
+}
+
+pub fn validate_opencode_dir(path: &Path) -> (bool, bool) {
+    let exists = path.is_dir() || path.is_file();
+    let db = opencode_db_path(path);
+    let has_db = db.is_file();
+    (exists, has_db)
+}
+
+pub fn opencode_db_path(path: &Path) -> PathBuf {
+    if path.is_file() {
+        path.to_path_buf()
+    } else {
+        path.join("opencode.db")
+    }
 }
 
 pub fn claude_projects_dir(claude: &Path) -> PathBuf {
@@ -273,5 +320,40 @@ mod tests {
         let mapped = host_path_string_from_codex_record(codex, "/home/alice/.codex/a.jsonl");
 
         assert_eq!(mapped, r"/home/alice/.codex/a.jsonl");
+    }
+
+    #[test]
+    fn opencode_db_path_resolves_directory_and_file() {
+        assert_eq!(
+            opencode_db_path(Path::new("/home/user/.local/share/opencode")),
+            PathBuf::from("/home/user/.local/share/opencode/opencode.db")
+        );
+
+        let temp = std::env::temp_dir().join(format!(
+            "codesync-test-db-{}.db",
+            std::process::id()
+        ));
+        std::fs::write(&temp, "").expect("write temp db file");
+        assert_eq!(opencode_db_path(&temp), temp);
+        std::fs::remove_file(&temp).ok();
+    }
+
+    #[test]
+    fn default_opencode_dir_respects_xdg_data_home() {
+        std::env::set_var("XDG_DATA_HOME", "/tmp/xdg-test-data");
+        let dir = default_opencode_dir();
+        assert_eq!(dir, PathBuf::from("/tmp/xdg-test-data/opencode"));
+        std::env::remove_var("XDG_DATA_HOME");
+    }
+
+    #[test]
+    fn default_opencode_dir_falls_back_to_home() {
+        std::env::remove_var("OPENCODE_DB");
+        std::env::remove_var("XDG_DATA_HOME");
+        let dir = default_opencode_dir();
+        let expected = dirs::home_dir()
+            .map(|h| h.join(".local").join("share").join("opencode"))
+            .unwrap();
+        assert_eq!(dir, expected);
     }
 }

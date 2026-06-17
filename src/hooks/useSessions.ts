@@ -17,8 +17,8 @@ export function useSessions(provider: SessionProvider, query: string) {
     setError(null);
     try {
       const list = query.trim()
-        ? await api.searchSessions(provider, settings.codex_dir, settings.claude_dir, query.trim())
-        : await api.listSessions(provider, settings.codex_dir, settings.claude_dir);
+        ? await api.searchSessions(provider, settings.codex_dir, settings.claude_dir, settings.opencode_dir, query.trim())
+        : await api.listSessions(provider, settings.codex_dir, settings.claude_dir, settings.opencode_dir);
       if (requestSeq.current !== requestId) return;
       setSessions(list);
     } catch (e: any) {
@@ -28,7 +28,7 @@ export function useSessions(provider: SessionProvider, query: string) {
     } finally {
       if (requestSeq.current === requestId) setLoading(false);
     }
-  }, [settings?.codex_dir, settings?.claude_dir, provider, query]);
+  }, [settings?.codex_dir, settings?.claude_dir, settings?.opencode_dir, provider, query]);
 
   useEffect(() => {
     if (timer.current) window.clearTimeout(timer.current);
@@ -50,11 +50,11 @@ export function useProjectGroups(provider: SessionProvider) {
     if (!settings?.codex_dir) return;
     setLoading(true);
     try {
-      setGroups(await api.groupByProject(provider, settings.codex_dir, settings.claude_dir));
+      setGroups(await api.groupByProject(provider, settings.codex_dir, settings.claude_dir, settings.opencode_dir));
     } finally {
       setLoading(false);
     }
-  }, [settings?.codex_dir, settings?.claude_dir, provider]);
+  }, [settings?.codex_dir, settings?.claude_dir, settings?.opencode_dir, provider]);
 
   useEffect(() => {
     void refresh();

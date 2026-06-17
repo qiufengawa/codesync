@@ -40,7 +40,7 @@ pub fn reveal_cwd(cwd: String) -> AppResult<()> {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn open_latest_release_page() -> AppResult<()> {
-    open_external("https://github.com/ccpopy/cc-sessions/releases/latest")
+    open_external("https://github.com/qiufengawa/codesync/releases/latest")
 }
 
 fn open_external(url: &str) -> AppResult<()> {
@@ -72,6 +72,7 @@ pub fn resume_command_text(provider: Option<String>, session_id: String) -> AppR
     let text = match provider.as_deref().unwrap_or("codex") {
         "codex" => format!("codex resume {}", session_id),
         "claude" => format!("claude --resume {}", session_id),
+        "opencode" => format!("opencode --session {}", session_id),
         other => return Err(AppError::Other(format!("不支持的 provider: {other}"))),
     };
     Ok(text)

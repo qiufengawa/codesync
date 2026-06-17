@@ -9,19 +9,19 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-  SheetDescription,
-  SheetFooter,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, type DirValidation, type UpdateCheckResult } from "@/lib/api";
 import { pickDirectoryPath } from "@/lib/dialog";
@@ -38,17 +38,21 @@ export function SettingsSheet({ trigger }: Props) {
   const load = useSettings((s) => s.load);
   const [codex, setCodex] = useState("");
   const [claude, setClaude] = useState("");
+  const [opencode, setOpencode] = useState("");
   const [backup, setBackup] = useState("");
   const [codexValidation, setCodexValidation] = useState<DirValidation | null>(null);
   const [claudeValidation, setClaudeValidation] = useState<DirValidation | null>(null);
+  const [opencodeValidation, setOpencodeValidation] = useState<DirValidation | null>(null);
   const [updateState, setUpdateState] = useState<UpdateCheckResult>({ state: "idle" });
   const [currentVersion, setCurrentVersion] = useState("");
   const [currentVersionError, setCurrentVersionError] = useState("");
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
     setCodex(settings.codex_dir);
     setClaude(settings.claude_dir);
+    setOpencode(settings.opencode_dir);
     setBackup(settings.backup_dir);
   }, [settings]);
 
@@ -90,6 +94,19 @@ export function SettingsSheet({ trigger }: Props) {
     return () => window.clearTimeout(id);
   }, [claude]);
 
+  useEffect(() => {
+    if (!opencode) return;
+    const id = window.setTimeout(async () => {
+      try {
+        const v = await api.validateOpencodeDir(opencode);
+        setOpencodeValidation(v);
+      } catch {
+        setOpencodeValidation(null);
+      }
+    }, 200);
+    return () => window.clearTimeout(id);
+  }, [opencode]);
+
   const pick = async (setter: (s: string) => void, cur: string) => {
     const picked = await pickDirectoryPath({ defaultPath: cur });
     if (picked) setter(picked);
@@ -105,11 +122,17 @@ export function SettingsSheet({ trigger }: Props) {
     setClaude(d);
   };
 
+  const useDefaultOpencode = async () => {
+    const d = await api.defaultOpencodeDir();
+    setOpencode(d);
+  };
+
   const onSave = async () => {
     try {
-      await save({ codex_dir: codex, claude_dir: claude, backup_dir: backup });
+      await save({ codex_dir: codex, claude_dir: claude, opencode_dir: opencode, backup_dir: backup });
       toast.success("设置已保存");
       await load();
+      setOpen(false);
     } catch (e: any) {
       toast.error("保存失败: " + String(e?.message ?? e));
     }
@@ -120,7 +143,7 @@ export function SettingsSheet({ trigger }: Props) {
     try {
       const [currentVersion, latest] = await Promise.all([
         api.appVersion(),
-        fetch("https://api.github.com/repos/ccpopy/cc-sessions/releases/latest", {
+        fetch("https://api.github.com/repos/qiufengawa/codesync/releases/latest", {
           headers: { Accept: "application/vnd.github+json" },
         }),
       ]);
@@ -164,124 +187,150 @@ export function SettingsSheet({ trigger }: Props) {
   const defaultTrigger = (
     <Tooltip>
       <TooltipTrigger asChild>
-        <SheetTrigger asChild>
+        <DialogTrigger asChild>
           <Button variant="ghost" size="icon" aria-label="设置">
             <SettingsIcon className="h-4 w-4" />
           </Button>
-        </SheetTrigger>
+        </DialogTrigger>
       </TooltipTrigger>
       <TooltipContent>设置 (Ctrl + ,)</TooltipContent>
     </Tooltip>
   );
 
   return (
-    <Sheet>
-      {trigger ? <SheetTrigger asChild>{trigger}</SheetTrigger> : defaultTrigger}
-      <SheetContent side="right" className="w-[440px] sm:max-w-[440px]">
-        <SheetHeader className="space-y-1">
-          <SheetTitle>设置</SheetTitle>
-          <SheetDescription>
+    <Dialog open={open} onOpenChange={setOpen}>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : defaultTrigger}
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[520px]">
+        <DialogHeader className="space-y-1 border-b border-border/50 px-6 py-4">
+          <DialogTitle>设置</DialogTitle>
+          <DialogDescription>
             本地运行，只有手动检查更新时会请求 GitHub；路径配置以当前运行环境为准。
-          </SheetDescription>
-        </SheetHeader>
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-6 space-y-6">
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Codex 目录</Label>
-            <div className="flex gap-2">
-              <Input
-                value={codex}
-                onChange={(e) => setCodex(e.target.value)}
-                placeholder={"C:\\Users\\<me>\\.codex"}
-                className="font-mono text-xs"
-              />
-              <Button variant="outline" size="icon" onClick={() => pick(setCodex, codex)} title="选择目录">
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={useDefault} title="使用默认">
-                <Home className="h-4 w-4" />
-              </Button>
-            </div>
-            <ValidationBadge v={codexValidation} provider="codex" />
-          </div>
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Claude 目录</Label>
-            <div className="flex gap-2">
-              <Input
-                value={claude}
-                onChange={(e) => setClaude(e.target.value)}
-                placeholder={"C:\\Users\\<me>\\.claude"}
-                className="font-mono text-xs"
-              />
-              <Button variant="outline" size="icon" onClick={() => pick(setClaude, claude)} title="选择目录">
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={useDefaultClaude} title="使用默认">
-                <Home className="h-4 w-4" />
-              </Button>
-            </div>
-            <ValidationBadge v={claudeValidation} provider="claude" />
-          </div>
-
-          <Separator />
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">备份目录</Label>
-            <div className="flex gap-2">
-              <Input
-                value={backup}
-                onChange={(e) => setBackup(e.target.value)}
-                className="font-mono text-xs"
-              />
-              <Button variant="outline" size="icon" onClick={() => pick(setBackup, backup)} title="选择目录">
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              推荐放在 Codex 或 Claude 目录外，避免把备份目录再次纳入备份。
-            </p>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <Label className="text-sm font-medium">版本更新</Label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  检查 GitHub Release 更新。
-                </p>
+        <ScrollArea className="flex-1">
+          <div className="space-y-5 px-6 py-5">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Codex 目录</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={codex}
+                  onChange={(e) => setCodex(e.target.value)}
+                  placeholder={"C:\\Users\\<me>\\.codex"}
+                  className="font-mono text-xs"
+                />
+                <Button variant="outline" size="icon" onClick={() => pick(setCodex, codex)} title="选择目录">
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={useDefault} title="使用默认">
+                  <Home className="h-4 w-4" />
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 shrink-0 gap-1.5"
-                disabled={updateState.state === "checking"}
-                onClick={checkUpdate}
-              >
-                <RefreshCw className={updateState.state === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                检查更新
-              </Button>
+              <ValidationBadge v={codexValidation} provider="codex" />
             </div>
-            <UpdateStatus
-              state={updateState}
-              currentVersion={currentVersion}
-              currentVersionError={currentVersionError}
-              onOpenRelease={openReleasePage}
-            />
-          </div>
-        </div>
 
-        <SheetFooter className="mt-6">
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Claude 目录</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={claude}
+                  onChange={(e) => setClaude(e.target.value)}
+                  placeholder={"C:\\Users\\<me>\\.claude"}
+                  className="font-mono text-xs"
+                />
+                <Button variant="outline" size="icon" onClick={() => pick(setClaude, claude)} title="选择目录">
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={useDefaultClaude} title="使用默认">
+                  <Home className="h-4 w-4" />
+                </Button>
+              </div>
+              <ValidationBadge v={claudeValidation} provider="claude" />
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">OpenCode 数据目录</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={opencode}
+                  onChange={(e) => setOpencode(e.target.value)}
+                  placeholder={"~/.local/share/opencode"}
+                  className="font-mono text-xs"
+                />
+                <Button variant="outline" size="icon" onClick={() => pick(setOpencode, opencode)} title="选择目录">
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={useDefaultOpencode} title="使用默认">
+                  <Home className="h-4 w-4" />
+                </Button>
+              </div>
+              <ValidationBadge v={opencodeValidation} provider="opencode" />
+              <p className="text-xs text-muted-foreground">
+                默认读取 <code>opencode.db</code>；也可以填写数据库文件所在目录。
+              </p>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">备份目录</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={backup}
+                  onChange={(e) => setBackup(e.target.value)}
+                  className="font-mono text-xs"
+                />
+                <Button variant="outline" size="icon" onClick={() => pick(setBackup, backup)} title="选择目录">
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                推荐放在 Codex 或 Claude 目录外，避免把备份目录再次纳入备份。
+              </p>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <Label className="text-sm font-medium">版本更新</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    检查 GitHub Release 更新。
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0 gap-1.5"
+                  disabled={updateState.state === "checking"}
+                  onClick={checkUpdate}
+                >
+                  <RefreshCw className={updateState.state === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                  检查更新
+                </Button>
+              </div>
+              <UpdateStatus
+                state={updateState}
+                currentVersion={currentVersion}
+                currentVersionError={currentVersionError}
+                onOpenRelease={openReleasePage}
+              />
+            </div>
+          </div>
+        </ScrollArea>
+
+        <div className="border-t border-border/50 px-6 py-4">
           <Button onClick={onSave} className="w-full">
             保存设置
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -359,7 +408,7 @@ function parseVersion(version: string): number[] {
     .filter((part) => Number.isFinite(part));
 }
 
-function ValidationBadge({ v, provider }: { v: DirValidation | null; provider: "codex" | "claude" }) {
+function ValidationBadge({ v, provider }: { v: DirValidation | null; provider: "codex" | "claude" | "opencode" }) {
   if (!v) return null;
   if (v.valid) {
     return (
@@ -371,7 +420,10 @@ function ValidationBadge({ v, provider }: { v: DirValidation | null; provider: "
   }
   const reasons: string[] = [];
   if (provider === "codex" && !v.has_state_db) reasons.push("缺 state_5.sqlite");
-  if (!v.has_sessions) reasons.push(provider === "codex" ? "缺 sessions/" : "缺 projects/");
+  if (provider === "opencode" && !v.has_state_db) reasons.push("缺 opencode.db");
+  if (!v.has_sessions) {
+    reasons.push(provider === "codex" ? "缺 sessions/" : provider === "claude" ? "缺 projects/" : "缺 session 表");
+  }
   return (
     <Badge variant="outline" className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400">
       <AlertTriangle className="h-3 w-3" />

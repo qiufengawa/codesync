@@ -1,23 +1,23 @@
 [package]
-name = "cc-session-manager"
+name = "codesync"
 version = "0.3.1"
-description = "CC Sessions"
-authors = ["zjsmew"]
+description = "CodeSync"
+authors = ["Qiufeng"]
 edition = "2021"
-default-run = "cc-session-manager"
+default-run = "codesync"
 
 [lib]
-name = "cc_session_manager_lib"
+name = "codesync_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "cc-session-manager"
+name = "codesync"
 path = "src/main.rs"
 required-features = ["desktop"]
 
 [[bin]]
-name = "cc-sessions"
-path = "src/bin/cc-sessions.rs"
+name = "codesync-cli"
+path = "src/bin/codesync-cli.rs"
 
 [features]
 default = ["desktop"]

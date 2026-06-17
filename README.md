@@ -1,22 +1,23 @@
-# CC Sessions
+# CodeSync
 
-![Version](https://img.shields.io/github/v/release/ccpopy/cc-sessions?label=version&sort=semver)
+![Version](https://img.shields.io/github/v/release/qiufengawa/codesync?label=version&sort=semver)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-ff9900)
 
-CC Sessions 是一款本地桌面应用，用于浏览、检索、备份、导入导出及修复 Codex 与 Claude Code 的会话记录。应用基于 Tauri、React、TypeScript 和 Rust 构建，默认读取本机的 `.codex` 和 `.claude` 目录。
+CodeSync 是一款本地桌面应用，用于浏览、检索、备份、导入导出及修复 Codex、Claude Code 与 OpenCode 的会话记录。应用基于 Tauri、React、TypeScript 和 Rust 构建，默认读取本机的 `.codex`、`.claude` 和 OpenCode 数据目录。
 
-![CC Sessions 模拟数据截图](img/readme-screenshot.png)
+![CodeSync 模拟数据截图](img/readme-screenshot.png)
 
 ## 功能
 
-- 按 Codex / Claude Code 来源查看会话列表。
+- 按 Codex / Claude Code / OpenCode 来源查看会话列表。
 - 支持按 ID、标题、首条消息及工作目录进行搜索。
-- 预览 JSONL 会话内容，区分用户消息、助手消息、推理过程、工具调用与工具返回。
-- 备份、恢复、导入、导出会话包。
+- 预览 Codex / Claude Code 的 JSONL 会话内容，以及 OpenCode `opencode.db` 中的会话内容，区分用户消息、助手消息、推理过程、工具调用与工具返回。
+- Codex / Claude Code 支持备份、恢复、导入、导出会话包；OpenCode 暂不开放这些写入入口。
 - 修复 Codex 本地索引、重建 `threads` 表、清理 orphan 记录。
 - Codex 会话支持 provider 分支管理，并可从稳定对话节点创建回溯分支。
+- OpenCode 支持读取 `opencode.db` 中的 session/message/part 数据，提供会话列表、搜索、预览、统计和显式删除。默认读取 `~/.local/share/opencode/opencode.db`，也可通过 `OPENCODE_DB` 或 `--opencode-dir` 指定。
 - 设置页面支持手动检查 GitHub Release 更新，并跳转至最新 Release 下载页面。
 
 ## 快捷键
@@ -69,7 +70,7 @@ npm run tauri:build
 
 ## CLI / WSL 无桌面环境
 
-仓库同时提供无桌面 CLI 二进制 `cc-sessions`。CLI 构建关闭 Tauri `desktop` feature，不启动窗口，也不依赖 WebView / WebKitGTK，适合 WSL、服务器或只有 SSH 的环境。
+仓库同时提供无桌面 CLI 二进制 `codesync-cli`。CLI 构建关闭 Tauri `desktop` feature，不启动窗口，也不依赖 WebView / WebKitGTK，适合 WSL、服务器或只有 SSH 的环境。
 
 检查 CLI 构建：
 
@@ -86,10 +87,10 @@ npm run cli:build
 构建后的二进制位于：
 
 ```bash
-src-tauri/target/release/cc-sessions
+src-tauri/target/release/codesync-cli
 ```
 
-Windows 下文件名为 `cc-sessions.exe`。
+Windows 下文件名为 `codesync-cli.exe`。
 
 推荐优先使用交互式菜单。菜单会用序号逐层引导会话列表、搜索、项目分组、预览、备份、导入导出、修复诊断等常用操作，比直接记子命令更适合日常使用。直接运行 CLI 不带子命令时会进入菜单模式：
 
@@ -100,7 +101,7 @@ npm run cli:run
 Windows release 版构建后可直接运行：
 
 ```powershell
-.\src-tauri\target\release\cc-sessions.exe
+.\src-tauri\target\release\codesync-cli.exe
 ```
 
 进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。列表页还支持 `s` 选择多个当前页序号、`u` 取消选择、`c` 清空选择、`d` 删除已选会话；选择序号可以用空格或逗号分隔，也支持 `1-3` 这种范围。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
@@ -112,55 +113,56 @@ Windows release 版构建后可直接运行：
 需要脚本化或机器可读输出时，再使用子命令：
 
 ```bash
-cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions -- list --limit 20 --sort size
-cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin cc-sessions -- --json repair diagnose
+cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin codesync-cli -- list --limit 20 --sort size
+cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin codesync-cli -- --json repair diagnose
 ```
 
 推荐入口：
 
 ```bash
-cc-sessions
-cc-sessions menu
+codesync-cli
+codesync-cli menu
 ```
 
 常用脚本化命令：
 
 ```bash
-cc-sessions list --limit 20 --sort size
-cc-sessions list --subagent --sort time
-cc-sessions --provider claude search "关键词"
-cc-sessions --provider claude projects --subagent
-cc-sessions --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
-cc-sessions projects --archived
-cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
-cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
-cc-sessions preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
-cc-sessions webui --host 127.0.0.1 --port 17888
-cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
-cc-sessions backup create --backup-dir ./backups --id <session-id> --name first-backup
-cc-sessions repair diagnose --json
-cc-sessions repair index --dry-run
-cc-sessions bundle export --out-dir ./bundles --id <session-id>
+  codesync-cli list --limit 20 --sort size
+  codesync-cli list --subagent --sort time
+  codesync-cli --provider claude search "关键词"
+  codesync-cli --provider opencode search "关键词"
+  codesync-cli --provider claude projects --subagent
+  codesync-cli --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
+  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
+  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
+  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
+  codesync-cli webui --host 127.0.0.1 --port 17888
+  codesync-cli --provider claude webui --host 127.0.0.1 --port 17888
+  codesync-cli --provider opencode webui --host 127.0.0.1 --port 17888
+  codesync-cli backup create --backup-dir ./backups --id <session-id> --name first-backup
+  codesync-cli repair diagnose --json
+  codesync-cli repair index --dry-run
+  codesync-cli bundle export --out-dir ./bundles --id <session-id>
 ```
 
-默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`。可通过 `--codex-dir`、`--claude-dir` 覆盖；Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，输出完整正文；`--summary` 可切回一行摘要，`--raw` 输出原始 JSONL，`--all` 或 `--limit 0` 会一直读取到文件末尾。如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
+默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`，OpenCode 读取 `~/.local/share/opencode/opencode.db`。可通过 `--codex-dir`、`--claude-dir`、`--opencode-dir` 覆盖；`--opencode-dir` 可以指向 `opencode.db` 文件，也可以指向包含该文件的目录。设置 `OPENCODE_DB` 时会自动推导 OpenCode 数据目录。Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，输出完整正文；`--summary` 可切回一行摘要，`--raw` 输出原始 JSONL，`--all` 或 `--limit 0` 会一直读取到文件末尾。如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
 
 ### CLI Web UI
 
 无桌面环境也可以启动一个内置 Web UI：
 
 ```bash
-cc-sessions webui --host 127.0.0.1 --port 17888
+codesync-cli webui --host 127.0.0.1 --port 17888
 ```
 
 默认绑定 `127.0.0.1`，只监听本机回环地址，适合 WSL、服务器和 SSH 环境。启动时会生成一次性 API token，并注入到本次返回的 Web 页面；浏览器后续调用本地 API 时必须带上该 token，请求没有 token 或 token 不匹配会被拒绝。
 
-Web UI 的设置会持久化。官方 CLI 便携包内包含 `cc-sessions.portable` 标记文件，因此配置会写到 `cc-sessions` 可执行文件同目录下的 `cc-sessions-webui-settings.json`。安装版或没有该标记的自定义构建会写到系统用户配置目录下的 `cc-sessions/cc-sessions-webui-settings.json`，避免安装目录不可写。需要指定确切位置时，可以设置环境变量 `CC_SESSIONS_WEBUI_SETTINGS` 指向目标 JSON 文件。首次启动会创建配置文件；之后页面里保存的路径会继续沿用。只有在启动命令显式传入 `--codex-dir` 或 `--claude-dir` 时，才会用命令行路径覆盖并写回配置。若配置文件所在目录不可写，保存会直接报错。
+Web UI 的设置会持久化。官方 CLI 便携包内包含 `codesync.portable` 标记文件，因此配置会写到 `codesync-cli` 可执行文件同目录下的 `codesync-webui-settings.json`。安装版或没有该标记的自定义构建会写到系统用户配置目录下的 `codesync-cli/codesync-webui-settings.json`，避免安装目录不可写。需要指定确切位置时，可以设置环境变量 `CODESYNC_WEBUI_SETTINGS` 指向目标 JSON 文件。首次启动会创建配置文件；之后页面里保存的路径会继续沿用。只有在启动命令显式传入 `--codex-dir`、`--claude-dir` 或 `--opencode-dir` 时，才会用命令行路径覆盖并写回配置。若配置文件所在目录不可写，保存会直接报错。
 
-`--provider codex|claude` 会决定打开根路径 `/` 时默认进入哪一组页面，例如：
+`--provider codex|claude|opencode` 会决定打开根路径 `/` 时默认进入哪一组页面，例如：
 
 ```bash
-cc-sessions --provider claude webui --host 127.0.0.1 --port 17888
+codesync-cli --provider claude webui --host 127.0.0.1 --port 17888
 ```
 
 WSL2 中启动后，Windows 宿主机通常可以直接打开 `http://localhost:17888` 访问；如果本机 localhost 转发不可用，可以在 WSL 内查看 IP：
@@ -172,12 +174,16 @@ hostname -I
 然后显式绑定所有网卡：
 
 ```bash
-cc-sessions webui --host 0.0.0.0 --port 17888
+codesync-cli webui --host 0.0.0.0 --port 17888
 ```
 
 绑定 `0.0.0.0` 可能让局域网内其他设备访问此服务。该 Web UI 没有账号登录，只有在你明确需要宿主机或其他设备通过 WSL IP 访问时才应使用。
 
-浏览器版 Web UI 复用桌面端页面。涉及选择目录、选择 zip 或保存 zip 的入口，在桌面端仍会打开系统对话框；在普通浏览器里会要求手动输入路径。这个路径以运行 `cc-sessions webui` 的环境为准，例如在 WSL 内启动时应填写 WSL 内可访问的路径。
+浏览器版 Web UI 复用桌面端页面。涉及选择目录、选择 zip 或保存 zip 的入口，在桌面端仍会打开系统对话框；在普通浏览器里会要求手动输入路径。这个路径以运行 `codesync-cli webui` 的环境为准，例如在 WSL 内启动时应填写 WSL 内可访问的路径。
+
+### CLI OpenCode 说明
+
+OpenCode 入口基于 `opencode.db` 读取，默认目录为 `~/.local/share/opencode`，也可使用 `--opencode-dir` 指向目录或 `opencode.db` 文件。当前支持列表、搜索、项目分组、统计、预览和删除；备份、恢复、Bundle 导入导出、修复类写入入口暂未启用，避免误改 OpenCode 的 SQLite 数据库。
 
 ### CLI 修复项说明
 
@@ -208,9 +214,9 @@ git push origin v0.2.6
 
 工作流会在 Windows、macOS 和 Linux 上分别构建 Tauri 安装产物。macOS 打包要求 `src-tauri/icons/icon.icns` 存在，本仓库已提交 Tauri 生成的跨平台图标文件。
 
-Windows Release 会额外上传 `cc-session-manager-portable-v版本号-windows.exe`，这是无需安装即可直接运行的便携版可执行文件。
+Windows Release 会额外上传 `codesync-portable-v版本号-windows.exe`，这是无需安装即可直接运行的便携版可执行文件。
 
-Release 也会在 Windows、macOS 和 Linux job 中分别上传 `cc-sessions-cli-v版本号-平台.zip`，这是不依赖桌面环境的 CLI 版本。远程仓库推送版本 tag 触发发布时，CLI 包会和桌面安装包一起出现在同一个 GitHub Release 中。
+Release 也会在 Windows、macOS 和 Linux job 中分别上传 `codesync-cli-v版本号-平台.zip`，这是不依赖桌面环境的 CLI 版本。远程仓库推送版本 tag 触发发布时，CLI 包会和桌面安装包一起出现在同一个 GitHub Release 中。
 
 ## 手动打包
 
@@ -226,7 +232,7 @@ npm run package:source
 npm run package:portable
 ```
 
-在 Windows 上，该命令会同时生成便携版压缩包和可直接运行的 `cc-session-manager-portable-v版本号-windows.exe`。
+在 Windows 上，该命令会同时生成便携版压缩包和可直接运行的 `codesync-portable-v版本号-windows.exe`。
 
 生成安装器包：
 
@@ -248,14 +254,14 @@ npm run package:cli
 
 ```bash
 # 移除 .app 包的隔离标记
-xattr -d com.apple.quarantine "/Applications/CC Sessions.app"
+xattr -d com.apple.quarantine "/Applications/CodeSync.app"
 ```
 
 若使用便携包中的独立二进制文件，需额外赋予可执行权限：
 
 ```bash
-chmod +x cc-session-manager
-xattr -d com.apple.quarantine cc-session-manager
+chmod +x codesync
+xattr -d com.apple.quarantine codesync
 ```
 
 ## 特别感谢

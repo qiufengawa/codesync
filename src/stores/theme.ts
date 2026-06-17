@@ -3,7 +3,7 @@ import { create } from "zustand";
 export type ThemeMode = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
-const STORAGE_KEY = "cc-sessions:theme";
+const STORAGE_KEY = "codesync:theme";
 
 function readStoredMode(): ThemeMode {
   if (typeof window === "undefined") return "system";

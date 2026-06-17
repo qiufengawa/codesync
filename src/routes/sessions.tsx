@@ -46,6 +46,7 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
   const [cloning, setCloning] = useState(false);
   const showHiddenRecords = useMemo(() => isExplicitHiddenRecordQuery(query), [query]);
   const isCodex = provider === "codex";
+  const isOpenCode = provider === "opencode";
 
   const refreshOverlay = useCallback(async () => {
     if (!settings?.codex_dir || !isCodex) return;
@@ -237,30 +238,32 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
   return (
     <>
       <TopBar
-        title={provider === "codex" ? "Codex 会话" : "Claude 会话"}
+        title={providerLabel(provider) + " 会话"}
         stats={loading ? "加载中…" : `${visibleSessions.length} 条`}
         onRefresh={refresh}
-        onBulkBackup={onBulkBackup}
+        onBulkBackup={isOpenCode ? undefined : onBulkBackup}
         onBulkDelete={onBulkDelete}
         showListTools
       >
-        <div className="flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 text-xs text-muted-foreground">
-          <Network className="h-3.5 w-3.5" />
-          <span className="hidden whitespace-nowrap md:inline">子代理</span>
-          <Switch
-            checked={showSubagentSessions}
-            onCheckedChange={setShowSubagentSessions}
-            aria-label="显示子代理会话"
-          />
-        </div>
+        {!isOpenCode && (
+          <div className="flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 text-xs text-muted-foreground">
+            <Network className="h-3.5 w-3.5" />
+            <span className="hidden whitespace-nowrap md:inline">子代理</span>
+            <Switch
+              checked={showSubagentSessions}
+              onCheckedChange={setShowSubagentSessions}
+              aria-label="显示子代理会话"
+            />
+          </div>
+        )}
       </TopBar>
 
       {prefillCwd && (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-6 py-2 text-xs">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-muted/20 px-6 py-2 text-xs">
           <span className="text-muted-foreground">已过滤项目：</span>
-          <code className="rounded bg-background px-1.5 py-0.5 font-mono">{prefillCwd}</code>
+          <code className="rounded bg-background px-1.5 py-0.5 font-mono text-foreground/80">{prefillCwd}</code>
           <button
-            className="ml-auto text-muted-foreground hover:text-foreground"
+            className="ml-auto text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setPrefill(null)}
           >
             清除过滤
@@ -269,14 +272,14 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
       )}
 
       {isCodex && clonableCount > 0 && currentProvider && (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-blue-500/5 px-6 py-2 text-xs">
-          <RotateCw className="h-3.5 w-3.5 text-blue-600" />
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-sky-500/5 px-6 py-2 text-xs">
+          <RotateCw className="h-3.5 w-3.5 text-sky-600" />
           <span className="text-foreground">
-            有 <b>{clonableCount}</b> 条会话{providerMaintenanceLabel}
+            有 <b className="font-semibold">{clonableCount}</b> 条会话{providerMaintenanceLabel}
             {providerMaintenanceLabel !== "需要修复本地索引可见性" && (
               <>
                 {" "}
-                <code className="rounded bg-background px-1.5 py-0.5 font-mono">{currentProvider}</code>
+                <code className="rounded bg-background px-1.5 py-0.5 font-mono text-foreground/80">{currentProvider}</code>
               </>
             )}
           </span>
@@ -298,7 +301,7 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
           <EmptyState
             title="读取失败"
             description={error}
-            icon={<MessageSquare className="h-10 w-10" />}
+            icon={<MessageSquare className="h-8 w-8" />}
           />
         ) : loading && visibleSessions.length === 0 ? (
           <div className="flex h-[60vh] items-center justify-center">
@@ -314,9 +317,11 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
                   ? "产生子代理后会自动出现在此"
                 : provider === "codex"
                   ? "打开 Codex 后会自动出现在此"
-                  : "打开 Claude Code 后会自动出现在此"
+                  : provider === "claude"
+                    ? "打开 Claude Code 后会自动出现在此"
+                    : "打开 OpenCode 后会自动出现在此"
             }
-            icon={<MessageSquare className="h-10 w-10" />}
+            icon={<MessageSquare className="h-8 w-8" />}
           />
         ) : (
           <SessionList
@@ -328,7 +333,7 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
             onCopyResume={onCopyResume}
             onRevealCwd={onReveal}
             onArchiveToggle={isCodex ? onArchiveToggle : undefined}
-            onBackup={(s) => setBackupTargets([s])}
+            onBackup={isOpenCode ? undefined : (s) => setBackupTargets([s])}
             onDelete={(s) => setDeleteTargets([s])}
             onClone={isCodex ? onCloneOne : undefined}
             onOpenFamily={isCodex ? (s) => setFamilySheetId(s.id) : undefined}
@@ -388,6 +393,7 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
             settings.codex_dir,
             ids,
             settings.claude_dir,
+            settings.opencode_dir,
           );
           const okCount = r.filter((x) => x.ok).length;
           const failed = r.filter((x) => !x.ok);
@@ -428,6 +434,12 @@ export default function SessionsRoute({ provider = "codex" }: { provider?: Sessi
       </DangerDialog>
     </>
   );
+}
+
+function providerLabel(provider: SessionProvider): string {
+  if (provider === "claude") return "Claude";
+  if (provider === "opencode") return "OpenCode";
+  return "Codex";
 }
 
 /**
@@ -471,6 +483,11 @@ function DeleteSummary({
             <b>{totalLogs}</b> 条日志、
             <b>{targets.length}</b> 个 rollout 文件（共 <b>{humanBytes(totalBytes)}</b>，
             <b>{humanTokens(totalTokens)}</b> token）。
+          </>
+        ) : provider === "opencode" ? (
+          <>
+            将从 OpenCode SQLite 数据库删除 <b>{targets.length}</b> 条 session 及其 message / part / event 记录
+            （约 <b>{humanBytes(totalBytes)}</b>，<b>{humanTokens(totalTokens)}</b> token）。
           </>
         ) : (
           <>
