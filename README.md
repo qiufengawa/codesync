@@ -1,275 +1,201 @@
+<div align="center">
+
 # CodeSync
 
+统一管理 **OpenCode · Codex · Claude Code** 的本地会话记录。
+
+浏览 · 检索 · 预览 · 统计 · 备份 · 修复
+
 ![Version](https://img.shields.io/github/v/release/qiufengawa/codesync?label=version&sort=semver)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-ff9900)
 
-CodeSync 是一款本地桌面应用，用于浏览、检索、备份、导入导出及修复 Codex、Claude Code 与 OpenCode 的会话记录。应用基于 Tauri、React、TypeScript 和 Rust 构建，默认读取本机的 `.codex`、`.claude` 和 OpenCode 数据目录。
+</div>
 
-![CodeSync 模拟数据截图](img/readme-screenshot.png)
+---
+
+## 概述
+
+CodeSync 是一款本地优先的桌面应用，用于在一个界面中统一管理来自 **OpenCode**、**OpenAI Codex** 和 **Anthropic Claude Code** 的 AI 编程会话记录。
+
+所有数据都在本地读取，不上传任何远端服务器。支持会话浏览、全文搜索、内容预览、统计分析、备份恢复与本地索引修复。
+
+### 支持的 Provider
+
+| Provider | 数据源 | 列表 / 搜索 | 预览 | 统计 | 备份 / 恢复 | 删除 | 修复 |
+| --- | --- | :-: | :-: | :-: | :-: | :-: | :-: |
+| **OpenCode** | `opencode.db` (SQLite) | ✅ | ✅ | ✅ | — | ✅ | — |
+| **Codex** | `.codex/` (JSONL + SQLite) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | `.claude/` (JSONL) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+> OpenCode 的高风险写入操作（备份/还原/修复）暂未开放，避免误改 SQLite 数据库。
+
+---
 
 ## 功能
 
-- 按 Codex / Claude Code / OpenCode 来源查看会话列表。
-- 支持按 ID、标题、首条消息及工作目录进行搜索。
-- 预览 Codex / Claude Code 的 JSONL 会话内容，以及 OpenCode `opencode.db` 中的会话内容，区分用户消息、助手消息、推理过程、工具调用与工具返回。
-- Codex / Claude Code 支持备份、恢复、导入、导出会话包；OpenCode 暂不开放这些写入入口。
-- 修复 Codex 本地索引、重建 `threads` 表、清理 orphan 记录。
-- Codex 会话支持 provider 分支管理，并可从稳定对话节点创建回溯分支。
-- OpenCode 支持读取 `opencode.db` 中的 session/message/part 数据，提供会话列表、搜索、预览、统计和显式删除。默认读取 `~/.local/share/opencode/opencode.db`，也可通过 `OPENCODE_DB` 或 `--opencode-dir` 指定。
-- 设置页面支持手动检查 GitHub Release 更新，并跳转至最新 Release 下载页面。
+- **三源会话管理** — 在侧栏一键切换 OpenCode / Codex / Claude Code，各自独立浏览。
+- **智能搜索** — 按 ID、标题、首条消息、工作目录全文检索。
+- **会话预览** — 区分用户消息、助手消息、推理过程、工具调用与工具返回，支持分页加载。
+- **多维统计** — 会话总量、Token 消耗、时间趋势、项目分布、模型占比、热力图。
+- **备份与恢复** — 单条或批量备份 Codex / Claude 会话，支持会话包导入导出。
+- **索引修复** — 重建 Codex `session_index.jsonl` / `threads` 表，清理 orphan 记录，修复 Claude GUI 可见性。
+- **Provider 分支管理** — Codex 会话支持 provider 切换同步、从稳定节点创建回溯分支。
+- **跨平台** — macOS / Windows / Linux 全平台支持，CLI 版本适配 WSL 和无桌面环境。
+
+---
+
+## 界面预览
+
+```
+┌──┬──────────────────────────────────────────────────────┐
+│🏠│ OpenCode 会话                  7条 · 33.8M tok    🔍 │
+│  │──────────────────────────────────────────────────── │
+│🔲│                                                      │
+│⬡ │  TODAY · 1                                          │
+│✦ │  ─────────────────────────────────────────────────  │
+│  │  ☐  理解 cc-sessions 仓库                            │
+│💬│     你去理解一下这个仓库 https://github.com/...     │
+│🔧│     ses_135504 · gpt-5.5 · 3h ago      33M · 5.7MB  │
+│📦│  ─────────────────────────────────────────────────  │
+│📤│                                                      │
+│  │  YESTERDAY · 4                                      │
+│📊│  ─────────────────────────────────────────────────  │
+│  │  ☐  opencode 多思考程度配置                          │
+│⚙️│     ses_1357ac · gpt-5.5 · 5h ago      446K · 188KB │
+│🌙│  ─────────────────────────────────────────────────  │
+└──┴──────────────────────────────────────────────────────┘
+```
+
+采用极简瑞士平面设计风格：零圆角、扁平列表、等宽元数据、大量留白。
+
+---
 
 ## 快捷键
 
 | 场景 | 快捷键 | 作用 |
 | --- | --- | --- |
 | 全局 | <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>K</kbd> | 聚焦搜索框 |
-| 全局 | <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>B</kbd> | 展开或收起侧边栏 |
 | 全局 | <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> | 切换明暗主题 |
 | 会话列表 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | 删除已选会话 |
-| 会话预览 | <kbd>Home</kbd> | 滚动到已加载内容顶部 |
-| 会话预览 | <kbd>End</kbd> | 滚动到已加载内容底部，并继续加载后续内容 |
-| 会话预览 | <kbd>Page Up</kbd> | 向上翻页 |
-| 会话预览 | <kbd>Page Down</kbd> | 向下翻页，并在接近底部时继续加载后续内容 |
+| 会话预览 | <kbd>Home</kbd> / <kbd>End</kbd> | 滚动到顶部 / 底部 |
+| 会话预览 | <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | 翻页并自动加载更多 |
 
-全局快捷键不会在输入框、文本框或弹窗内触发；会话预览的滚动快捷键只在预览弹窗内生效，并会避开过滤输入框。
+---
 
-## 开发环境
+## 快速开始
 
-前置依赖：
+### 开发环境
 
-- Node.js 20 及以上版本
-- npm
-- Rust stable 工具链
-- 目标平台对应的 Tauri 2 构建依赖
-
-安装依赖：
+前置依赖：Node.js 20+、npm、Rust stable、Tauri 2 构建依赖。
 
 ```bash
+# 安装依赖
 npm ci
-```
 
-启动开发环境：
-
-```bash
+# 启动开发模式
 npm run tauri:dev
-```
 
-前端构建：
-
-```bash
-npm run build
-```
-
-Tauri 构建：
-
-```bash
+# 构建桌面应用
 npm run tauri:build
 ```
 
-## CLI / WSL 无桌面环境
+构建产物位于 `src-tauri/target/release/bundle/`。
 
-仓库同时提供无桌面 CLI 二进制 `codesync-cli`。CLI 构建关闭 Tauri `desktop` feature，不启动窗口，也不依赖 WebView / WebKitGTK，适合 WSL、服务器或只有 SSH 的环境。
+### 默认数据路径
 
-检查 CLI 构建：
+| Provider | 默认路径 | 环境变量 |
+| --- | --- | --- |
+| OpenCode | `~/.local/share/opencode/opencode.db` (macOS/Linux)<br>`%LOCALAPPDATA%\opencode\opencode.db` (Windows) | `OPENCODE_DB` |
+| Codex | `~/.codex/` | — |
+| Claude Code | `~/.claude/` | — |
+
+可在设置弹窗中自定义路径。
+
+---
+
+## CLI 版本
+
+仓库同时提供无桌面 CLI `codesync-cli`，关闭 Tauri `desktop` feature，适合 WSL、服务器或 SSH 环境。
 
 ```bash
-npm run cli:check
-```
-
-构建 release 版 CLI：
-
-```bash
+# 构建
 npm run cli:build
-```
 
-构建后的二进制位于：
-
-```bash
-src-tauri/target/release/codesync-cli
-```
-
-Windows 下文件名为 `codesync-cli.exe`。
-
-推荐优先使用交互式菜单。菜单会用序号逐层引导会话列表、搜索、项目分组、预览、备份、导入导出、修复诊断等常用操作，比直接记子命令更适合日常使用。直接运行 CLI 不带子命令时会进入菜单模式：
-
-```bash
+# 运行交互菜单（推荐）
 npm run cli:run
-```
 
-Windows release 版构建后可直接运行：
-
-```powershell
-.\src-tauri\target\release\codesync-cli.exe
-```
-
-进入菜单后输入序号即可逐层选择功能；列表页支持 `n` 下一页、`p` 上一页、`b` 返回上一层、`m` 返回主菜单、`0` 退出。列表页还支持 `s` 选择多个当前页序号、`u` 取消选择、`c` 清空选择、`d` 删除已选会话；选择序号可以用空格或逗号分隔，也支持 `1-3` 这种范围。删除、覆盖恢复、清理和分支切换等写入操作需要输入 `yes` 才会执行。
-
-菜单中的 Codex / Claude 会话入口默认显示主会话；查看列表、搜索、按项目查看和按大小查看时，可以选择“只查看子代理会话”，这样子代理也能继续使用同一套分页、项目分组和排序能力。
-
-交互菜单里的“预览会话内容”默认只显示 Codex / Claude Code 应用中可见的用户消息和助手消息，不显示工具调用、工具返回、元数据，也会过滤 Codex 注入的 AGENTS 指令和环境上下文。如需排查完整 JSONL 事件流，可在预览模式中选择“全部事件”。
-
-需要脚本化或机器可读输出时，再使用子命令：
-
-```bash
-cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin codesync-cli -- list --limit 20 --sort size
-cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --bin codesync-cli -- --json repair diagnose
-```
-
-推荐入口：
-
-```bash
-codesync-cli
-codesync-cli menu
-```
-
-常用脚本化命令：
-
-```bash
-  codesync-cli list --limit 20 --sort size
-  codesync-cli list --subagent --sort time
-  codesync-cli --provider claude search "关键词"
-  codesync-cli --provider opencode search "关键词"
-  codesync-cli --provider claude projects --subagent
-  codesync-cli --codex-dir "\\wsl.localhost\Ubuntu\home\me\.codex" list
-  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --all
-  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --limit 40
-  codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all --limit 40
-  codesync-cli webui --host 127.0.0.1 --port 17888
-  codesync-cli --provider claude webui --host 127.0.0.1 --port 17888
-  codesync-cli --provider opencode webui --host 127.0.0.1 --port 17888
-  codesync-cli backup create --backup-dir ./backups --id <session-id> --name first-backup
-  codesync-cli repair diagnose --json
-  codesync-cli repair index --dry-run
-  codesync-cli bundle export --out-dir ./bundles --id <session-id>
-```
-
-默认路径与桌面端一致：Codex 读取 `~/.codex`，Claude Code 读取 `~/.claude`，OpenCode 读取 `~/.local/share/opencode/opencode.db`。可通过 `--codex-dir`、`--claude-dir`、`--opencode-dir` 覆盖；`--opencode-dir` 可以指向 `opencode.db` 文件，也可以指向包含该文件的目录。设置 `OPENCODE_DB` 时会自动推导 OpenCode 数据目录。Windows 下读取 WSL 内 Codex 数据时，`--codex-dir` 使用 `\\wsl.localhost\<发行版>\home\<用户>\.codex` 这类 UNC 路径。`list`、`search` 和 `projects` 默认只显示主会话，加入 `--subagent` 后只显示子代理会话，并保留按时间、项目和大小的排序 / 分组能力。`list` 和 `search` 支持 `--sort size` 按 token 从小到大排序，便于找出问候测试等低消耗无效会话。`preview` 默认是 `--mode conversation`，输出完整正文；`--summary` 可切回一行摘要，`--raw` 输出原始 JSONL，`--all` 或 `--limit 0` 会一直读取到文件末尾。如需查看工具调用、工具返回和原始元数据，请使用 `--mode all`。需要机器可读输出时加 `--json`。
-
-### CLI Web UI
-
-无桌面环境也可以启动一个内置 Web UI：
-
-```bash
+# 或直接使用子命令
+codesync-cli --provider opencode list --limit 20
+codesync-cli --provider claude search "关键词"
+codesync-cli --provider opencode stats kpi
+codesync-cli preview ~/.codex/sessions/.../rollout-xxx.jsonl --mode all
 codesync-cli webui --host 127.0.0.1 --port 17888
 ```
 
-默认绑定 `127.0.0.1`，只监听本机回环地址，适合 WSL、服务器和 SSH 环境。启动时会生成一次性 API token，并注入到本次返回的 Web 页面；浏览器后续调用本地 API 时必须带上该 token，请求没有 token 或 token 不匹配会被拒绝。
+### Web UI 模式
 
-Web UI 的设置会持久化。官方 CLI 便携包内包含 `codesync.portable` 标记文件，因此配置会写到 `codesync-cli` 可执行文件同目录下的 `codesync-webui-settings.json`。安装版或没有该标记的自定义构建会写到系统用户配置目录下的 `codesync-cli/codesync-webui-settings.json`，避免安装目录不可写。需要指定确切位置时，可以设置环境变量 `CODESYNC_WEBUI_SETTINGS` 指向目标 JSON 文件。首次启动会创建配置文件；之后页面里保存的路径会继续沿用。只有在启动命令显式传入 `--codex-dir`、`--claude-dir` 或 `--opencode-dir` 时，才会用命令行路径覆盖并写回配置。若配置文件所在目录不可写，保存会直接报错。
-
-`--provider codex|claude|opencode` 会决定打开根路径 `/` 时默认进入哪一组页面，例如：
+无桌面环境可启动内置 Web UI，浏览器访问完整功能：
 
 ```bash
-codesync-cli --provider claude webui --host 127.0.0.1 --port 17888
+codesync-cli --provider opencode webui --host 127.0.0.1 --port 17888
 ```
 
-WSL2 中启动后，Windows 宿主机通常可以直接打开 `http://localhost:17888` 访问；如果本机 localhost 转发不可用，可以在 WSL 内查看 IP：
+启动时生成一次性 API token，注入到 Web 页面，后续请求需携带该 token。
 
-```bash
-hostname -I
-```
-
-然后显式绑定所有网卡：
-
-```bash
-codesync-cli webui --host 0.0.0.0 --port 17888
-```
-
-绑定 `0.0.0.0` 可能让局域网内其他设备访问此服务。该 Web UI 没有账号登录，只有在你明确需要宿主机或其他设备通过 WSL IP 访问时才应使用。
-
-浏览器版 Web UI 复用桌面端页面。涉及选择目录、选择 zip 或保存 zip 的入口，在桌面端仍会打开系统对话框；在普通浏览器里会要求手动输入路径。这个路径以运行 `codesync-cli webui` 的环境为准，例如在 WSL 内启动时应填写 WSL 内可访问的路径。
-
-### CLI OpenCode 说明
-
-OpenCode 入口基于 `opencode.db` 读取，默认目录为 `~/.local/share/opencode`，也可使用 `--opencode-dir` 指向目录或 `opencode.db` 文件。当前支持列表、搜索、项目分组、统计、预览和删除；备份、恢复、Bundle 导入导出、修复类写入入口暂未启用，避免误改 OpenCode 的 SQLite 数据库。
-
-### CLI 修复项说明
-
-CLI 和桌面端的修复功能只处理 Codex 本地索引和可见性问题，不会修改会话正文语义，也不会凭空恢复已经删除的 JSONL 会话文件。
-
-- `修复 session_index.jsonl`：扫描 `~/.codex/sessions/` 下仍存在的 active rollout 文件，重建 Codex 的 `session_index.jsonl`。它用于修复“会话文件还在，但索引缺失导致列表看不到”的问题，不是修复 JSONL 内容。
-- `重建 threads 表`：从 rollout 元数据重新写入或更新 `~/.codex/state_5.sqlite` 中的 `threads` 表。它用于修复 Codex 本地列表、搜索、标题、工作目录等数据库记录缺失或漂移的问题。
-- `清理 orphan 记录`：删除 `session_index.jsonl` 或 `threads` 表里指向已不存在 rollout 文件的残留记录。它不会删除仍存在的有效会话文件。
-- `克隆会话到 provider` / `批量克隆到当前 provider`：用于处理 Codex `model_provider` 切换后，历史会话 provider 与当前配置不一致导致的可见性或续聊问题。
-- `从事件创建回溯分支`：从某个稳定事件位置复制出新分支，并归档原 active 分支。该操作会写入本地 Codex 会话文件和索引，执行前会要求确认。
-- `Claude GUI 会话列表修复`（`repair claude-gui [--fix] [--dry-run]`）：Claude Code 的 GUI（如 VS Code 插件）只读取会话文件头尾各 64KB 推导标题，推导失败的会话会从历史列表中消失（CLI `claude --resume` 不受影响，常见于走中转 provider 时 AI 标题生成失败、长会话 compact 后续聊等场景）。修复方式与官方"重命名会话"一致：在 jsonl 末尾补写一条 `custom-title` 记录，不改动既有内容。
+---
 
 ## 发布
 
-项目中以下文件的版本号需保持一致：
+版本号在以下三处保持一致：
 
 - `package.json`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 
-推送形如 `v0.2.6` 的 tag 将触发 GitHub Actions 打包并创建 Release：
+推送 `v*.*.*` 格式的 tag 触发 GitHub Actions 自动打包三平台 Release：
 
 ```bash
-git tag -a v0.2.6 -m "v0.2.6"
-git push origin main
-git push origin v0.2.6
+git tag -a v0.4.0 -m "v0.4.0"
+git push origin v0.4.0
 ```
 
-工作流会在 Windows、macOS 和 Linux 上分别构建 Tauri 安装产物。macOS 打包要求 `src-tauri/icons/icon.icns` 存在，本仓库已提交 Tauri 生成的跨平台图标文件。
+### macOS 提示
 
-Windows Release 会额外上传 `codesync-portable-v版本号-windows.exe`，这是无需安装即可直接运行的便携版可执行文件。
-
-Release 也会在 Windows、macOS 和 Linux job 中分别上传 `codesync-cli-v版本号-平台.zip`，这是不依赖桌面环境的 CLI 版本。远程仓库推送版本 tag 触发发布时，CLI 包会和桌面安装包一起出现在同一个 GitHub Release 中。
-
-## 手动打包
-
-生成源码包：
+从 Release 下载的应用可能被 Gatekeeper 拦截：
 
 ```bash
-npm run package:source
+xattr -dr com.apple.quarantine "/Applications/CodeSync.app"
 ```
 
-生成便携包：
+---
 
-```bash
-npm run package:portable
-```
+## 技术栈
 
-在 Windows 上，该命令会同时生成便携版压缩包和可直接运行的 `codesync-portable-v版本号-windows.exe`。
+| 层 | 技术 |
+| --- | --- |
+| 桌面框架 | Tauri 2 |
+| 前端 | React 18 · TypeScript · Tailwind CSS · Radix UI |
+| 后端 | Rust · rusqlite · serde |
+| 构建 | Vite 6 · Cargo |
+| 图表 | Recharts |
+| 状态 | Zustand |
 
-生成安装器包：
+---
 
-```bash
-npm run package:product
-```
+## 致谢
 
-生成 CLI 包：
+本项目基于以下开源项目二次开发，在此深表感谢：
 
-```bash
-npm run package:cli
-```
+- **[cc-sessions](https://github.com/ccpopy/cc-sessions)** by [@ccpopy](https://github.com/ccpopy) — 本项目的上游，提供了 Codex / Claude Code 会话管理、修复、备份迁移的完整基础。
+- **[codex-session-cloner](https://github.com/goodnightzsj/codex-session-cloner)** by [@goodnightzsj](https://github.com/goodnightzsj) — 参考了修复和会话导出导入的实现思路。
+- **[linux.do](https://linux.do)** — 真诚、友善、团结、专业，共建你我引以为荣之社区。
 
-打包输出位于 `release/` 目录，该目录不会提交到仓库。
+OpenCode、OpenAI、Anthropic Claude 的名称和 Logo 归各自公司所有，本项目仅用于本地数据管理，不与这些公司有任何关联。
 
-## macOS 可执行文件处理
-
-从 GitHub Release 下载的 macOS 应用可能被 Gatekeeper 阻止运行，需移除 quarantine 扩展属性：
-
-```bash
-# 移除 .app 包的隔离标记
-xattr -d com.apple.quarantine "/Applications/CodeSync.app"
-```
-
-若使用便携包中的独立二进制文件，需额外赋予可执行权限：
-
-```bash
-chmod +x codesync
-xattr -d com.apple.quarantine codesync
-```
-
-## 特别感谢
-
-[linux.do](https://linux.do) —— 真诚、友善、团结、专业，共建你我引以为荣之社区。
-
-[codex-session-cloner](https://github.com/goodnightzsj/codex-session-cloner) —— 参考了修复和会话导出导入的代码
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
