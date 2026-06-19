@@ -10,15 +10,20 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ matrix.platform }} ${{ matrix.target }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - windows-latest
-          - macos-latest
-          - ubuntu-latest
+        include:
+          - platform: windows-latest
+            target: ""
+          - platform: ubuntu-latest
+            target: ""
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-13
+            target: x86_64-apple-darwin
 
     steps:
       - name: Checkout
@@ -32,6 +37,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
@@ -92,17 +99,23 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: CodeSync ${{ github.ref_name }}
+          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
           releaseBody: |
-            ## Changes
+            ## CodeSync v0.4.0
 
             ### 新增
-            - 新增 Claude GUI 会话列表可见性诊断与修复能力，可检测因标题推导失败而从 VS Code 等 GUI 历史列表中消失的 Claude Code 会话。
-            - 新增 `codesync-cli repair claude-gui [--fix] [--dry-run]`，支持在 CLI 中预览或补写 `custom-title` 记录来恢复 GUI 显示。
-            - 桌面端和浏览器 Web UI 的 Claude 修复页新增 GUI 会话列表修复入口，包含扫描统计、可修复会话列表、效果预览和确认修复流程。
+            - 支持 OpenCode 作为第三个 provider，读取 `opencode.db` SQLite 数据库
+            - OpenCode 备份/还原功能对齐（导出 session/message/part 为 JSON，还原时写回）
+            - OpenCode Bundle 导入导出功能对齐
+            - 跨平台 OpenCode 默认路径检测（macOS/Linux/Windows）
+            - 极简瑞士风 UI 全面重构
+            - 官方 Provider SVG Logo（OpenCode/OpenAI/Claude）
+            - 48px 图标栏布局
 
             ### 改进
-            - 交互式 CLI 的修复菜单补充 Claude GUI 会话列表修复和 Claude history 残留清理入口，减少需要记忆子命令的场景。
-            - Claude GUI 会话列表修复会复刻官方 GUI 的标题推导规则，只对可确认不可见且能从会话内容推导标题的会话进行处理。
+            - 全品牌改名 cc-sessions → CodeSync
+            - 内部二进制名改为 codesync / codesync-cli
+            - macOS 支持 Apple Silicon + Intel 双架构发布
 
             ### 修复
             - 修复通知弹窗样式未加载导致 toast 撑开页面布局的问题。

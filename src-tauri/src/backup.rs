@@ -42,15 +42,15 @@ pub fn create_backup(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     backup_dir: String,
     ids: Vec<String>,
     name: Option<String>,
     note: Option<String>,
 ) -> AppResult<BackupSummary> {
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
-        return Err(AppError::Other(
-            "OpenCode 备份暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
-        ));
+        let dir = opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
+        return create_opencode_backup(PathBuf::from(dir), PathBuf::from(backup_dir), ids, name, note);
     }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
@@ -491,6 +491,136 @@ fn write_backup_history<'a>(
     crate::history::write_lines(&backup_dir.join("history.jsonl"), &lines)
 }
 
+fn create_opencode_backup(
+    opencode_dir: PathBuf,
+    backup_root: PathBuf,
+    ids: Vec<String>,
+    name: Option<String>,
+    note: Option<String>,
+) -> AppResult<BackupSummary> {
+    fs::create_dir_all(&backup_root)?;
+    let final_name = name
+        .map(|n| n.trim().to_string())
+        .unwrap_or_else(|| format!("backup-{}", chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")));
+    validate_backup_name(&final_name)?;
+    let final_path = backup_root.join(&final_name);
+    if final_path.exists() {
+        return Err(AppError::Other(format!("备份已存在: {}", final_name)));
+    }
+    fs::create_dir_all(final_path.join("sessions"))?;
+
+    let mut manifest_sessions: Vec<ManifestSession> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let export = crate::opencode_sessions::export_session(&opencode_dir, id)?;
+        let session_json = serde_json::to_vec(&export)?;
+        let sha = hex::encode(sha2::Sha256::digest(&session_json));
+        let rel = format!("sessions/{id}.json");
+        let session_file = final_path.join(&rel);
+        fs::write(&session_file, &session_json)?;
+
+        let session_row = &export.session_row;
+        let title = session_row.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let cwd = session_row.get("directory").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let time_created = session_row.get("time_created").and_then(|t| t.as_i64()).unwrap_or(0);
+        let time_updated = session_row.get("time_updated").and_then(|t| t.as_i64()).unwrap_or(0);
+        let bytes = fs::metadata(&session_file).map(|m| m.len()).unwrap_or(0);
+        let parts_count = export.parts.len() as u32 + export.messages.len() as u32;
+
+        manifest_sessions.push(ManifestSession {
+            provider: Some(PROVIDER_OPENCODE.to_string()),
+            id: id.clone(),
+            rollout_relpath: rel,
+            source_relpath: None,
+            sidecar_relpath: None,
+            title,
+            cwd,
+            created_at: time_created,
+            updated_at: time_updated,
+            tokens_used: 0,
+            model: None,
+            bytes_rollout: bytes,
+            logs_count: parts_count,
+            history_rows: 0,
+            sha256_rollout: sha,
+        });
+    }
+
+    let manifest = Manifest {
+        version: 2,
+        provider: Some(PROVIDER_OPENCODE.to_string()),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        codex_dir: String::new(),
+        claude_dir: None,
+        note,
+        sessions: manifest_sessions,
+    };
+    fs::write(
+        final_path.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    let total_bytes: u64 = manifest.sessions.iter().map(|s| s.bytes_rollout).sum();
+    Ok(BackupSummary {
+        path: final_path.to_string_lossy().into_owned(),
+        name: final_name,
+        provider: Some(PROVIDER_OPENCODE.to_string()),
+        created_at: manifest.created_at,
+        sessions_count: manifest.sessions.len() as u32,
+        total_bytes,
+        note: manifest.note.clone(),
+    })
+}
+
+fn restore_one_opencode(
+    backup: &Path,
+    opencode_dir: &Path,
+    session: &ManifestSession,
+    overwrite: bool,
+) -> AppResult<RestoreResult> {
+    let session_file = backup.join(&session.rollout_relpath);
+    if !session_file.is_file() {
+        return Ok(RestoreResult {
+            id: session.id.clone(),
+            ok: false,
+            threads_inserted: false,
+            logs_inserted: 0,
+            history_appended: 0,
+            rollout_copied: false,
+            conflict: false,
+            error: Some(format!("备份文件不存在: {}", session_file.to_string_lossy())),
+        });
+    }
+    let raw = fs::read_to_string(&session_file)?;
+    let export: crate::opencode_sessions::OpenCodeSessionExport = serde_json::from_str(&raw)?;
+
+    let conflict = crate::opencode_sessions::export_session(opencode_dir, &session.id).is_ok();
+    if conflict && !overwrite {
+        return Ok(RestoreResult {
+            id: session.id.clone(),
+            ok: false,
+            threads_inserted: false,
+            logs_inserted: 0,
+            history_appended: 0,
+            rollout_copied: false,
+            conflict: true,
+            error: Some("目标 session 已存在".into()),
+        });
+    }
+
+    let imported = crate::opencode_sessions::import_session(opencode_dir, &export, overwrite)?;
+    Ok(RestoreResult {
+        id: session.id.clone(),
+        ok: imported,
+        threads_inserted: imported,
+        logs_inserted: if imported { export.messages.len() as u32 + export.parts.len() as u32 } else { 0 },
+        history_appended: 0,
+        rollout_copied: imported,
+        conflict: false,
+        error: if imported { None } else { Some("导入失败".into()) },
+    })
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_backups(backup_dir: String, provider: Option<String>) -> AppResult<Vec<BackupSummary>> {
     let root = PathBuf::from(&backup_dir);
@@ -601,6 +731,7 @@ pub fn restore_session(
     backup_path: String,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     id: String,
     overwrite: bool,
 ) -> AppResult<RestoreResult> {
@@ -608,6 +739,9 @@ pub fn restore_session(
     let codex = PathBuf::from(&codex_dir);
     let claude = PathBuf::from(
         claude_dir.unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned()),
+    );
+    let opencode = PathBuf::from(
+        opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned()),
     );
     let raw = fs::read_to_string(backup.join("manifest.json"))?;
     let manifest: Manifest = serde_json::from_str(&raw)?;
@@ -620,7 +754,7 @@ pub fn restore_session(
         .as_deref()
         .unwrap_or_else(|| manifest_session_provider(&manifest, target));
     if provider == PROVIDER_OPENCODE {
-        return Err(AppError::Other("OpenCode 备份还原暂未开放".into()));
+        return restore_one_opencode(&backup, &opencode, target, overwrite);
     }
     if provider == PROVIDER_CLAUDE {
         restore_one_claude(&backup, &claude, target, overwrite)
@@ -635,12 +769,16 @@ pub fn restore_all(
     backup_path: String,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     overwrite: bool,
 ) -> AppResult<Vec<RestoreResult>> {
     let backup = PathBuf::from(&backup_path);
     let codex = PathBuf::from(&codex_dir);
     let claude = PathBuf::from(
         claude_dir.unwrap_or_else(|| paths::default_claude_dir().to_string_lossy().into_owned()),
+    );
+    let opencode = PathBuf::from(
+        opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned()),
     );
     let raw = fs::read_to_string(backup.join("manifest.json"))?;
     let manifest: Manifest = serde_json::from_str(&raw)?;
@@ -650,16 +788,7 @@ pub fn restore_all(
             .as_deref()
             .unwrap_or_else(|| manifest_session_provider(&manifest, s));
         if session_provider == PROVIDER_OPENCODE {
-            out.push(RestoreResult {
-                id: s.id.clone(),
-                ok: false,
-                threads_inserted: false,
-                logs_inserted: 0,
-                history_appended: 0,
-                rollout_copied: false,
-                conflict: false,
-                error: Some("OpenCode 备份还原暂未开放".into()),
-            });
+            out.push(restore_one_opencode(&backup, &opencode, s, overwrite)?);
             continue;
         }
         out.push(
@@ -1045,6 +1174,7 @@ mod tests {
             Some(PROVIDER_CLAUDE.to_string()),
             String::new(),
             Some(source_claude.to_string_lossy().into_owned()),
+            None,
             backup_dir.to_string_lossy().into_owned(),
             vec!["claude-backup-1".to_string()],
             Some("claude-backup".to_string()),
@@ -1064,6 +1194,7 @@ mod tests {
             backup_path,
             String::new(),
             Some(restore_claude.to_string_lossy().into_owned()),
+            None,
             "claude-backup-1".to_string(),
             false,
         )?;

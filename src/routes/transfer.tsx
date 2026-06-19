@@ -59,19 +59,6 @@ export default function TransferRoute({ provider = "codex" }: { provider?: Sessi
   const providerLabel = provider === "codex" ? "Codex" : provider === "claude" ? "Claude" : "OpenCode";
   const providerDir = provider === "codex" ? codexDir : provider === "claude" ? claudeDir : (settings?.opencode_dir ?? "");
 
-  if (provider === "opencode") {
-    return (
-      <>
-        <TopBar title="OpenCode 导出 / 导入" showListTools={false} />
-        <EmptyState
-          icon={<Package className="h-10 w-10" />}
-          title="OpenCode 导出 / 导入暂未开放"
-          description="OpenCode 会话保存在 SQLite 数据库中；当前仅开放只读浏览、搜索、预览、统计和显式删除。"
-        />
-      </>
-    );
-  }
-
   return (
     <>
       <TopBar title={`${providerLabel} 导出 / 导入`} showListTools={false} />

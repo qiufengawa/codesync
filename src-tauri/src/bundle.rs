@@ -172,15 +172,15 @@ pub fn export_session_bundles(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     out_dir: String,
     ids: Vec<String>,
     machine_label: Option<String>,
     export_group: Option<String>,
 ) -> AppResult<Vec<ExportReport>> {
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
-        return Err(AppError::Other(
-            "OpenCode Bundle 导出暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
-        ));
+        let dir = opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
+        return export_opencode_bundles(&PathBuf::from(dir), &PathBuf::from(out_dir), &ids, machine_label.as_deref(), export_group.as_deref());
     }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
@@ -532,15 +532,19 @@ pub fn export_all_bundles(
     provider: Option<String>,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     out_dir: String,
     machine_label: Option<String>,
     export_group: Option<String>,
     active_only: bool,
 ) -> AppResult<Vec<ExportReport>> {
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
-        return Err(AppError::Other(
-            "OpenCode Bundle 导出暂未开放：当前仅支持只读浏览、搜索、预览、统计和删除".into(),
-        ));
+        let dir = opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
+        let ids = crate::opencode_sessions::scan_sessions(&PathBuf::from(&dir))?
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>();
+        return export_opencode_bundles(&PathBuf::from(dir), &PathBuf::from(out_dir), &ids, machine_label.as_deref(), export_group.as_deref());
     }
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_CLAUDE {
         let claude = PathBuf::from(
@@ -596,7 +600,7 @@ pub fn list_bundles(src_dir: String, provider: Option<String>) -> AppResult<Vec<
         return Ok(Vec::new());
     }
     if provider.as_deref() == Some(PROVIDER_OPENCODE) {
-        return Ok(Vec::new());
+        // OpenCode bundles use the same manifest format, don't skip them
     }
     let mut out: Vec<BundleListItem> = Vec::new();
     for entry in walkdir::WalkDir::new(&root)
@@ -657,13 +661,32 @@ pub fn import_session_bundles(
     src_dir: String,
     codex_dir: String,
     claude_dir: Option<String>,
+    opencode_dir: Option<String>,
     mode: ImportMode,
     make_visible: bool,
     strict: bool,
     project_mappings: Vec<ProjectPathMapping>,
 ) -> AppResult<Vec<ImportReport>> {
     if provider.as_deref().unwrap_or(PROVIDER_CODEX) == PROVIDER_OPENCODE {
-        return Err(AppError::Other("OpenCode Bundle 导入暂未开放".into()));
+        let dir = opencode_dir.unwrap_or_else(|| paths::default_opencode_dir().to_string_lossy().into_owned());
+        let items = list_bundles(src_dir, provider.clone())?;
+        let mut reports = Vec::with_capacity(items.len());
+        for it in items {
+            let result = import_one_opencode(&PathBuf::from(&dir), &it, &mode);
+            reports.push(result.unwrap_or_else(|e| ImportReport {
+                session_id: it.manifest.session_id.clone(),
+                ok: false,
+                rollout_written: false,
+                history_appended: 0,
+                threads_upserted: false,
+                index_appended: false,
+                skipped_reason: None,
+                error: Some(e.to_string()),
+                verified: false,
+                sha_mismatch: false,
+            }));
+        }
+        return Ok(reports);
     }
     let codex = PathBuf::from(&codex_dir);
     let claude = PathBuf::from(
@@ -1361,6 +1384,7 @@ mod tests {
             Some(PROVIDER_CLAUDE.to_string()),
             String::new(),
             Some(source_claude.to_string_lossy().into_owned()),
+            None,
             bundle_dir.to_string_lossy().into_owned(),
             vec!["claude-bundle-1".to_string()],
             Some("test-machine".to_string()),
@@ -1387,6 +1411,7 @@ mod tests {
             bundle_dir.to_string_lossy().into_owned(),
             String::new(),
             Some(import_claude.to_string_lossy().into_owned()),
+            None,
             ImportMode::Skip,
             false,
             true,
@@ -1419,6 +1444,7 @@ mod tests {
             bundle_dir.to_string_lossy().into_owned(),
             String::new(),
             Some(import_claude.to_string_lossy().into_owned()),
+            None,
             ImportMode::Skip,
             false,
             true,
@@ -1451,6 +1477,7 @@ mod tests {
             Some(PROVIDER_CODEX.to_string()),
             source_codex.to_string_lossy().into_owned(),
             None,
+            None,
             bundle_dir.to_string_lossy().into_owned(),
             vec![id.to_string()],
             Some("test-machine".to_string()),
@@ -1463,6 +1490,7 @@ mod tests {
             Some(PROVIDER_CODEX.to_string()),
             bundle_dir.to_string_lossy().into_owned(),
             import_codex.to_string_lossy().into_owned(),
+            None,
             None,
             ImportMode::Overwrite,
             true,
@@ -1886,4 +1914,59 @@ pub fn unpack_zip_to_temp(zip_path: String) -> AppResult<ZipReport> {
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     ));
     unpack_zip(zip_path, dir.to_string_lossy().into_owned())
+}
+
+fn export_opencode_bundles(
+    opencode_dir: &Path,
+    out_dir: &Path,
+    ids: &[String],
+    machine_label: Option<&str>,
+    export_group: Option<&str>,
+) -> AppResult<Vec<ExportReport>> {
+    fs::create_dir_all(out_dir)?;
+    let mut reports = Vec::with_capacity(ids.len());
+    for id in ids {
+        let export = crate::opencode_sessions::export_session(opencode_dir, id)?;
+        let json = serde_json::to_vec_pretty(&export)?;
+        let safe_id = id.replace('/', "_");
+        let bundle_name = format!("{PROVIDER_OPENCODE}-{safe_id}");
+        let bundle_dir = out_dir.join(&bundle_name);
+        fs::create_dir_all(&bundle_dir)?;
+        let payload_path = bundle_dir.join("opencode-session.json");
+        fs::write(&payload_path, &json)?;
+        reports.push(ExportReport {
+            session_id: id.clone(),
+            ok: true,
+            bundle_path: Some(bundle_dir.to_string_lossy().into_owned()),
+            error: None,
+            skipped_reason: None,
+        });
+    }
+    Ok(reports)
+}
+
+fn import_one_opencode(
+    opencode_dir: &Path,
+    item: &BundleListItem,
+    mode: &ImportMode,
+) -> AppResult<ImportReport> {
+    let payload_path = std::path::Path::new(&item.bundle_dir).join("opencode-session.json");
+    let raw = fs::read_to_string(&payload_path)?;
+    let export: crate::opencode_sessions::OpenCodeSessionExport = serde_json::from_str(&raw)?;
+
+    let overwrite = matches!(mode, ImportMode::Overwrite);
+    let imported = crate::opencode_sessions::import_session(opencode_dir, &export, overwrite)?;
+
+    Ok(ImportReport {
+        session_id: export.session_id.clone(),
+        ok: imported,
+        rollout_written: imported,
+        history_appended: 0,
+        threads_upserted: imported,
+        index_appended: false,
+        skipped_reason: if imported { None } else { Some("session 已存在".to_string()) },
+        error: None,
+        verified: true,
+        sha_mismatch: false,
+    })
 }

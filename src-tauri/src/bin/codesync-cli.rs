@@ -671,6 +671,7 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(concrete_provider(ctx)?),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 backup_dir,
                 ids,
                 name,
@@ -735,6 +736,7 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 backup_path,
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 id,
                 overwrite,
             )?;
@@ -757,6 +759,7 @@ fn cmd_backup(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 backup_path,
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 overwrite,
             )?;
             output(ctx, &results, |items| {
@@ -790,6 +793,7 @@ fn cmd_bundle(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(concrete_provider(ctx)?),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 out_dir,
                 ids,
                 machine_label,
@@ -810,6 +814,7 @@ fn cmd_bundle(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 Some(concrete_provider(ctx)?),
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 out_dir,
                 machine_label,
                 export_group,
@@ -840,6 +845,7 @@ fn cmd_bundle(ctx: &CliContext, mut args: Vec<String>) -> CliResult<()> {
                 src_dir,
                 ctx.codex_dir.clone(),
                 Some(ctx.claude_dir.clone()),
+                Some(ctx.opencode_dir.clone()),
                 mode,
                 make_visible,
                 strict,

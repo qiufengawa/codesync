@@ -1,6 +1,6 @@
 [package]
 name = "codesync"
-version = "0.3.1"
+version = "0.4.0"
 description = "CodeSync"
 authors = ["Qiufeng"]
 edition = "2021"

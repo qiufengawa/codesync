@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
@@ -11,6 +12,17 @@ use crate::paths;
 
 const PROVIDER: &str = "opencode";
 const TITLE_MAX_CHARS: usize = 80;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OpenCodeSessionExport {
+    pub session_id: String,
+    pub session_row: Value,
+    pub messages: Vec<Value>,
+    pub parts: Vec<Value>,
+    pub session_messages: Vec<Value>,
+    pub events: Vec<Value>,
+    pub event_sequences: Vec<Value>,
+}
 
 struct OpenCodeSessionRow {
     id: String,
@@ -192,6 +204,190 @@ pub fn delete_one(opencode_dir: &Path, id: &str) -> AppResult<DeleteResult> {
         result.error = Some("OpenCode 数据库中未找到该 session".to_string());
     }
     Ok(result)
+}
+
+pub fn export_session(opencode_dir: &Path, id: &str) -> AppResult<OpenCodeSessionExport> {
+    let db = paths::opencode_db_path(opencode_dir);
+    if !db.is_file() {
+        return Err(AppError::NotFound(format!(
+            "OpenCode database not found: {}",
+            db.to_string_lossy()
+        )));
+    }
+    let conn = open_ro_db(&db)?;
+
+    let session_row = query_single_row_by_id(&conn, "session", "id", id)?;
+    let session_row = session_row
+        .ok_or_else(|| AppError::NotFound(format!("OpenCode session not found: {id}")))?;
+
+    let messages = query_rows_by_id(&conn, "message", "session_id", id)?;
+    let parts = query_rows_by_id(&conn, "part", "session_id", id)?;
+    let session_messages = query_rows_by_id(&conn, "session_message", "session_id", id)?;
+    let events = if table_exists(&conn, "event")? {
+        query_rows_by_id(&conn, "event", "aggregate_id", id)?
+    } else {
+        Vec::new()
+    };
+    let event_sequences = if table_exists(&conn, "event_sequence")? {
+        query_rows_by_id(&conn, "event_sequence", "aggregate_id", id)?
+    } else {
+        Vec::new()
+    };
+
+    Ok(OpenCodeSessionExport {
+        session_id: id.to_string(),
+        session_row,
+        messages,
+        parts,
+        session_messages,
+        events,
+        event_sequences,
+    })
+}
+
+pub fn import_session(opencode_dir: &Path, export: &OpenCodeSessionExport, overwrite: bool) -> AppResult<bool> {
+    let db = paths::opencode_db_path(opencode_dir);
+    if !db.is_file() {
+        return Err(AppError::NotFound(format!(
+            "OpenCode database not found: {}",
+            db.to_string_lossy()
+        )));
+    }
+    let mut conn = open_db(&db)?;
+    let id = &export.session_id;
+
+    if overwrite {
+        delete_one(opencode_dir, id).ok();
+    } else {
+        let existing = query_single_row_by_id(&conn, "session", "id", id)?;
+        if existing.is_some() {
+            return Ok(false);
+        }
+    }
+
+    let tx = conn.transaction()?;
+
+    if table_exists(&tx, "session")? {
+        insert_row(&tx, "session", &export.session_row)?;
+    }
+    for msg in &export.messages {
+        insert_row(&tx, "message", msg)?;
+    }
+    for part in &export.parts {
+        insert_row(&tx, "part", part)?;
+    }
+    for sm in &export.session_messages {
+        insert_row(&tx, "session_message", sm)?;
+    }
+    if table_exists(&tx, "event")? {
+        for evt in &export.events {
+            insert_row(&tx, "event", evt)?;
+        }
+    }
+    if table_exists(&tx, "event_sequence")? {
+        for es in &export.event_sequences {
+            insert_row(&tx, "event_sequence", es)?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(true)
+}
+
+fn query_rows_by_id(conn: &Connection, table: &str, column: &str, id: &str) -> AppResult<Vec<Value>> {
+    if !table_exists(conn, table)? {
+        return Ok(Vec::new());
+    }
+    let sql = format!("SELECT * FROM {table} WHERE {column} = ?");
+    let mut stmt = conn.prepare(&sql)?;
+    let cols: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rows = stmt.query_map([id], |row| {
+        let mut obj = serde_json::Map::new();
+        for (i, col) in cols.iter().enumerate() {
+            let val: Value = match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                Ok(rusqlite::types::ValueRef::Integer(v)) => Value::from(v),
+                Ok(rusqlite::types::ValueRef::Real(v)) => Value::from(v),
+                Ok(rusqlite::types::ValueRef::Text(bytes)) => {
+                    Value::from(std::str::from_utf8(bytes).unwrap_or(""))
+                }
+                Ok(rusqlite::types::ValueRef::Blob(bytes)) => {
+                    Value::from(String::from_utf8_lossy(bytes).to_string())
+                }
+                Err(_) => Value::Null,
+            };
+            obj.insert(col.clone(), val);
+        }
+        Ok(Value::Object(obj))
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn query_single_row_by_id(conn: &Connection, table: &str, column: &str, id: &str) -> AppResult<Option<Value>> {
+    let rows = query_rows_by_id(conn, table, column, id)?;
+    Ok(rows.into_iter().next())
+}
+
+fn insert_row(tx: &Connection, table: &str, row: &Value) -> AppResult<()> {
+    let obj = row.as_object().ok_or_else(|| {
+        AppError::Other(format!("export row for {table} is not an object"))
+    })?;
+    let columns: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
+    let placeholders: Vec<String> = (0..columns.len()).map(|i| format!("?{}", i + 1)).collect();
+    let sql = format!(
+        "INSERT OR REPLACE INTO {table} ({}) VALUES ({})",
+        columns.join(", "),
+        placeholders.join(", ")
+    );
+
+    let owned_values: Vec<(String, String)> = columns
+        .iter()
+        .map(|col| {
+            let val = obj.get(*col);
+            let key = col.to_string();
+            let vstr = match val {
+                Some(Value::Null) | None => "\0NULL\0".to_string(),
+                Some(Value::Number(n)) => {
+                    if let Some(i) = n.as_i64() {
+                        format!("\0INT:{i}\0")
+                    } else if let Some(f) = n.as_f64() {
+                        format!("\0REAL:{f}\0")
+                    } else {
+                        "\0NULL\0".to_string()
+                    }
+                }
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Bool(b)) => if *b { "1".to_string() } else { "0".to_string() },
+                _ => "\0NULL\0".to_string(),
+            };
+            (key, vstr)
+        })
+        .collect();
+
+    let params: Vec<Box<dyn rusqlite::ToSql>> = owned_values
+        .iter()
+        .map(|(_, v)| {
+            if v == "\0NULL\0" {
+                Box::new(rusqlite::types::Null) as Box<dyn rusqlite::ToSql>
+            } else if let Some(rest) = v.strip_prefix("\0INT:") {
+                let i: i64 = rest.trim_end_matches('\0').parse().unwrap_or(0);
+                Box::new(i) as Box<dyn rusqlite::ToSql>
+            } else if let Some(rest) = v.strip_prefix("\0REAL:") {
+                let f: f64 = rest.trim_end_matches('\0').parse().unwrap_or(0.0);
+                Box::new(f) as Box<dyn rusqlite::ToSql>
+            } else {
+                Box::new(v.as_str()) as Box<dyn rusqlite::ToSql>
+            }
+        })
+        .collect();
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    tx.execute(&sql, param_refs.as_slice())?;
+    Ok(())
 }
 
 fn query_session_rows(conn: &Connection) -> AppResult<Vec<OpenCodeSessionRow>> {
